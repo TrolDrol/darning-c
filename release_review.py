@@ -5,7 +5,7 @@ from datetime import date
 from html import escape
 import json
 
-from analyzers import ENGINES, REPOSITORY_RULE_ID, RULES, repository_paths_checked
+from analyzers import ENGINES, REPOSITORY_RULE_ID, REPORT_RULES as RULES, repository_paths_checked
 from workspace import WorkspaceError
 
 

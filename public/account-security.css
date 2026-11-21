@@ -1,0 +1,17 @@
+.security-page { width: min(100%, 1180px); margin: 0 auto; padding: clamp(16px, 4vw, 48px); }
+.security-page h1 { font-size: clamp(1.45rem, 3vw, 2.1rem); margin: 0; }
+.security-page .panel { padding: clamp(16px, 3vw, 30px); }
+.security-form { max-width: 32rem; margin: 4vh auto; }
+.security-form form { display: grid; gap: 1rem; margin: 1rem 0; }
+.security-form form[hidden], .security-page [hidden], #manage [hidden] { display: none; }
+.security-form p { line-height: 1.5; }
+.directory-scroll { overflow-x: auto; }
+.directory-scroll table { width: 100%; border-collapse: collapse; }
+.directory-scroll th, .directory-scroll td { padding: .8rem .65rem; text-align: left; border-bottom: 1px solid var(--line); }
+.directory-scroll th, .directory-scroll small { color: var(--muted); }
+.directory-scroll strong, .directory-scroll small { display: block; overflow-wrap: anywhere; }
+.account-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+.security-page .danger, #manage .danger { color: var(--high); }
+.security-page [role=status]:empty, #manage [role=status]:empty { margin: 0; }
+#manage { width: min(32rem, 92vw); }
+#manage input { min-width: 0; width: 100%; }

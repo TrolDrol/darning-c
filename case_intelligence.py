@@ -36,7 +36,7 @@ _CREDENTIAL = re.compile(
 # Model prose is location-free. Coordinates and advisory identifiers are rendered
 # directly from detector evidence. Reject references introduced in free text.
 _REFERENCE = re.compile(
-    r"(?:\b(?:CVE|GHSA)\s*[-:0-9]|[\\/]|\b[\w-]+\.(?:kt[s]?|java|ya?ml|json|properties|xml|toml|gradle|env|txt)\b"
+    r"(?:\b(?:CVE|GHSA)\s*[-:0-9]|[\\/]|\b[\w-]+\.(?:py|[cm]?[jt]sx?|go|rs|cs|cpp|rb|php|sql|kt[s]?|java|ya?ml|json|properties|xml|toml|gradle|env|txt)\b"
     r"|(?:line|строк[а-я]*)\s*[:№#]?\s*\d|https?:|[A-Za-z]:\\|\x00)", re.I,
 )
 _CATALOG = {
@@ -234,6 +234,9 @@ def verify_explanation(summary, findings, files):
                 reasons.append("Тип риска или число находок расходятся с результатом анализатора.")
             if key in seen or not truth or refs != truth["evidence"]:
                 reasons.append("Ссылки на доказательства расходятся с результатом анализатора.")
+            if not isinstance(refs, list) or any(not isinstance(ref, dict) for ref in refs):
+                reasons.append("Некорректный формат ссылок на снимок.")
+                refs = []
             for ref in refs:
                 path, line = ref.get("path"), ref.get("line")
                 end = ref.get("endLine", line)
@@ -253,11 +256,20 @@ def verify_explanation(summary, findings, files):
         verification = {"scope":"structuredEvidence", "status":status, "reasons":reasons}
         if status=="verified":
             verification["fact"] = {"riskCode":key[1], "count":len(truth["evidence"]), "evidence":truth["evidence"]}
+        elif status=="mismatch":
+            # A contradictory model statement must not survive as advice sent to a downstream node.
+            group = {"source":"catalog","category":key[0],"class":key[1],
+                     "summary":truth["summary"] if truth else "Эта группа не подтверждена анализаторами.",
+                     "action":truth["action"] if truth else "Проверьте исходные результаты этого запуска.",
+                     "evidence":truth["evidence"] if truth else []}
         checked.append(group | {"verification":verification})
         seen.add(key)
     result = dict(summary or {})
     result["groups"] = checked
+    if any(g["verification"]["status"]=="mismatch" for g in checked):
+        result["source"] = "mixed" if any(g["source"]=="model" for g in checked) else "catalog"
     result["verification"] = {"complete": seen == set(expected) and len(seen) == len(checked),
+                              "rejectedGroups":sum(g["verification"]["status"]=="mismatch" for g in checked),
                               "verifiedGroups": sum(g["verification"]["status"]=="verified" for g in checked)}
     return result
 

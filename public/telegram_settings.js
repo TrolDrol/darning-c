@@ -1,9 +1,10 @@
-export async function telegramSettings({request,project}) {
+export async function telegramSettings({request,project,projectName}) {
   const dialog=document.createElement("dialog");
   dialog.className="studio-dialog telegram-settings";
   dialog.setAttribute("aria-labelledby","tg-settings-heading");
   dialog.innerHTML=`<form class="studio-dialog-form">
     <h2 id="tg-settings-heading">Telegram проекта</h2>
+    <p data-project-name></p>
     <p data-info role="status">Проверяем подключение…</p>
     <p data-success role="status" hidden></p>
     <p data-error class="run-error" role="alert"></p>
@@ -19,6 +20,7 @@ export async function telegramSettings({request,project}) {
     </div></form>`;
   document.body.append(dialog);
   const el=selector=>dialog.querySelector(selector);
+  el("[data-project-name]").textContent = projectName ? "Отчёты по проекту «" + projectName + "»" : "";
   const endpoint="/api/telegram?"+new URLSearchParams({project});
   const form=el("form"), code=form.elements.code;
   let state, startUrl="", timer, revision=0, busy=false;

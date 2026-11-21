@@ -3,6 +3,7 @@
 from bisect import bisect_left
 from dataclasses import dataclass
 import re
+from pathlib import PurePosixPath
 
 
 POLICY = {
@@ -121,6 +122,8 @@ def config_secrets(text):
         if not match or not (kind := secret_kind(match[1])):
             continue
         value = re.sub(r"\s+#.*$", "", match[2]).strip().strip("\"'")
+        if re.fullmatch(r"""\$\{\{\s*secrets(?:\.[A-Za-z_][A-Za-z_0-9]*|\[['"][A-Za-z_][A-Za-z_0-9]*['"]\])\s*\}\}""", value):
+            continue
         if value.startswith(("#", "{", "[", "|", ">")):
             continue
         fallback = re.fullmatch(r"\$\{[\w.-]+:([^{}]*)\}", value)
@@ -204,8 +207,13 @@ def scan_secrets(files):
         elif path.lower().endswith((".yaml", ".yml", ".properties", ".env")):
             issues = config_secrets(text)
         else:
-            issues = generic_secrets(text)
-        result.extend(finding("SECRET", kind, path, line) for kind, line in issues)
+            issues = generic_secrets(text, path)
+        for kind, line in issues:
+            item = finding("SECRET", kind, path, line)
+            if set(part.lower() for part in PurePosixPath(path).parts[:-1]) & {"tests","test","__tests__","fixtures","qa"}:
+                item["sourceContext"] = "test"
+                item["description"] += " Файл относится к тестам. Уточните, служит ли значение фикстурой или даёт доступ к действующей системе."
+            result.append(item)
     return result
 
 
@@ -214,14 +222,45 @@ def scan_secrets(files):
 _ASSIGNMENT = re.compile(r"""(?<![\w.-])["']?([a-zA-Z_][\w.-]{0,95})["']?\s*(?::=|=(?!=)|:)\s*(["'])([^"'\\\r\n]{4,256})\2""")
 
 
-def generic_secrets(text):
+_ENUM_ENTRY = re.compile(r"""["']?([A-Z][A-Z_0-9]*)["']?\s*:\s*(["'])([^"'\\{}\r\n]*)\2""")
+
+
+def enum_label(line, match):
+    if match[1] != "SECRET":
+        return False
+    start = line.rfind("{", 0, match.start())
+    end = line.find("}", match.end())
+    if start < 0 or end < 0:
+        return False
+    entries = [_ENUM_ENTRY.fullmatch(part.strip()) for part in line[start + 1:end].split(",")]
+    if len(entries) < 2 or not all(entries):
+        return False
+    # A display-options call consumes the dictionary values as UI labels.
+    if match[3].casefold() in {"секрет", "secret"} and re.search(r"\b(?:opts|options)\(\s*$", line[:start]):
+        return True
+    # An immediately indexed dispatch table whose every value is a rule identifier.
+    return line[end + 1:].lstrip().startswith("[") and all(re.fullmatch(r"[A-Z]{2,8}-[0-9]{3,5}", e[3]) for e in entries)
+
+
+def generic_secrets(text, path=""):
+    suffix = PurePosixPath(path.casefold()).suffix
+    shell = suffix in {".sh", ".bash", ".zsh"}
     for number, line in enumerate(text.splitlines(), 1):
         if line.lstrip().startswith(("//", "#", "/*", "*", "<!--")):
             continue
         for match in _ASSIGNMENT.finditer(line):
             kind = secret_kind(match[1])
-            if kind and literal_credential(match[3]):
-                yield kind, number
+            if not kind or not literal_credential(match[3]):
+                continue
+            if shell and match[2] == '"' and re.fullmatch(r"\$\(\s*cat\s+(?:--\s+)?/[A-Za-z0-9_./-]+\s*\)", match[3]):
+                continue
+            if ((shell or suffix == ".sql") and match[2] == "'" and re.fullmatch(ID, match[3])
+                    and re.search(r"\b(?:CREATE|ALTER)\s+(?:USER|ROLE)\b[^;]*\bPASSWORD\s+:$", line[:match.start(3)-1], re.I)):
+                # psql expands :'variable' as a quoted SQL parameter.
+                continue
+            if suffix in {".py", ".js", ".mjs", ".ts", ".tsx", ".jsx"} and enum_label(line, match):
+                continue
+            yield kind, number
 
 
 @dataclass

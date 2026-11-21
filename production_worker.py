@@ -14,6 +14,9 @@ from threading import Event
 
 from analyzers import CONTENT_ENGINES, RULES, repository_paths_checked
 from delivery import send_summary
+from case_account_email import deliver_one
+from account_recovery import deliver_reset
+from delivery import account_smtp
 from github_integration import GitHubError, github_config, is_current_head, load_snapshots, publish_check, trial_snapshot
 from repository_service import job_binding
 from issue_store import IssueStore
@@ -241,6 +244,7 @@ def loop(store, role, stop):
     signals = Signals()
     url = public_url()
     github = github_config(require_webhook=False)
+    account_transport = account_smtp(SMTP) if role == "delivery" else None
     next_prune = 0
     report_days = int(os.getenv("BANK_REPORT_RETENTION_DAYS", "30"))
     job_hours = int(os.getenv("BANK_JOB_RETENTION_HOURS", "24"))
@@ -253,6 +257,9 @@ def loop(store, role, stop):
             if role == "scan" and time.monotonic() >= next_prune:
                 store.prune(report_days, job_hours)
                 next_prune = time.monotonic() + 300
+            if role == "delivery":
+                deliver_one(store, account_transport)
+                deliver_reset(store, account_transport, url)
             job = store.claim(KINDS[role], BUSY_LEASE)
             if job is None:
                 signals.wait(role)

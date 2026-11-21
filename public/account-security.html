@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <title>Штопка · Учётная запись</title>
+  <link rel="icon" href="/darning-icon.png">
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/portal.css">
+  <link rel="stylesheet" href="/themes.css">
+  <link rel="stylesheet" href="/branding.css">
+  <link rel="stylesheet" href="/buttons.css">
+  <link rel="stylesheet" href="/vi-buttons.css">
+  <link rel="stylesheet" href="/controls.css">
+  <link rel="stylesheet" href="/account-security.css">
+  <script src="/account-security.js" type="module"></script>
+</head>
+<body>
+  <header class="masthead">
+    <a href="/" class="brand"><img src="/darning-logo.png" alt="Штопка" width="142" height="32"></a>
+    <button type="button" data-theme-toggle aria-label="Сменить тему"></button>
+  </header>
+  <main class="security-page">
+    <section id="recover" class="panel security-form" hidden>
+      <h1>Восстановление пароля</h1>
+      <form id="request-reset">
+        <p>Введите логин. Ссылка придёт на подтверждённую почту. Если почта не привязана, ссылку может выдать супер-администратор.</p>
+        <label class="field">Логин<input name="username" required maxlength="64" autocomplete="username" autocapitalize="off" spellcheck="false"></label>
+        <button class="button primary">Отправить ссылку</button>
+      </form>
+      <form id="complete-reset" hidden>
+        <p>Задайте новый пароль. После сохранения потребуется войти снова на всех устройствах.</p>
+        <label class="field">Новый пароль<input name="password" required minlength="12" maxlength="128" type="password" autocomplete="new-password"></label>
+        <label class="field">Повторите пароль<input name="repeat" required minlength="12" maxlength="128" type="password" autocomplete="new-password"></label>
+        <button class="button primary">Сохранить пароль</button>
+      </form>
+      <p id="recovery-status" role="status"></p><a href="/#login">Ко входу</a>
+    </section>
+    <section id="directory" hidden>
+      <header class="page-heading"><h1>Пользователи</h1><a class="button" href="/#projects">К проектам</a></header>
+      <div class="panel">
+        <div class="directory-scroll"><table>
+          <thead><tr><th scope="col">Пользователь</th><th scope="col">Подтверждённая почта</th>
+            <th scope="col">Telegram по проектам</th><th scope="col">Доступ</th></tr></thead>
+          <tbody id="people"></tbody>
+        </table></div>
+        <p id="directory-status" role="status"></p>
+        <button type="button" id="more" class="button" hidden>Ещё пользователи</button>
+      </div>
+    </section>
+  </main>
+  <dialog id="manage" aria-labelledby="manage-title">
+    <form class="dialog-body" id="action-form">
+      <h2 id="manage-title"></h2><p id="instructions"></p>
+      <label id="confirm-label" class="field" hidden>Логин для подтверждения<input name="confirmation" autocomplete="off"></label>
+      <label id="link-label" class="field" hidden>Одноразовая ссылка<input name="url" readonly></label>
+      <p id="action-status" role="status"></p>
+      <div class="page-actions"><button type="button" id="close" class="button">Закрыть</button>
+        <button type="submit" id="apply" class="button primary"></button></div>
+    </form>
+  </dialog>
+</body>
+</html>

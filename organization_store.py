@@ -10,7 +10,7 @@ from production_store import DEFAULT_PROJECT, initialize_workflow
 
 ORGANIZATION_ROLES = ("member", "moderator", "owner")
 PROJECT_ROLES = ("reader", "editor", "manager")
-ACCOUNT = 'username, display_name AS "displayName", password_hash AS "passwordHash", avatar'
+ACCOUNT = 'username, display_name AS "displayName", password_hash AS "passwordHash", avatar, session_generation'
 INVITATION = """
     invite.id, invite.organization_id AS "organizationId", invite.project_id AS "projectId",
     invite.organization_role AS "organizationRole", invite.project_role AS "projectRole",
@@ -118,7 +118,8 @@ class OrganizationStore:
 
     def get_account(self, username):
         with self.store.connect() as db:
-            return db.execute(f"SELECT {ACCOUNT} FROM bank_account WHERE username = %s", (username,)).fetchone()
+            return db.execute(f"SELECT {ACCOUNT} FROM bank_account WHERE username = %s AND deleted_at IS NULL",
+                              (username,)).fetchone()
 
     def update_profile(self, username, name, avatar, replace_avatar):
         with self.store.connect() as db:
@@ -213,7 +214,7 @@ class OrganizationStore:
             project_id = _insert_project(db, organization_id, "Мой проект", username, spec, timestamp)
         return {"organizationId": organization_id, "projectId": project_id}
 
-    def create_project(self, organization_id, name, actor, spec, timestamp, *, super_admin=False):
+    def create_project(self, organization_id, name, actor, spec, timestamp, *, super_admin=False, ci_key=None):
         with self.store.connect() as db:
             organization = db.execute(
                 "SELECT name FROM bank_organization WHERE id = %s FOR UPDATE", (organization_id,),
@@ -232,6 +233,8 @@ class OrganizationStore:
                     (organization_id, actor),
                 ).fetchone()
             project_id = _insert_project(db, organization_id, name, actor, spec, timestamp)
+            if ci_key:
+                db.execute("INSERT INTO bank_ci_key_project(key_id,project_id) VALUES(%s,%s)", (ci_key, project_id))
         return {
             "id": project_id, "name": name, "organizationId": organization_id,
             "organizationName": organization["name"], "organizationRole": membership["role"], "role": "manager",
@@ -260,7 +263,7 @@ class OrganizationStore:
                 SELECT account.display_name AS "displayName", membership.role
                 FROM bank_account AS account LEFT JOIN bank_organization_member AS membership
                     ON membership.username = account.username AND membership.organization_id = %s
-                WHERE account.username = %s
+                WHERE account.username = %s AND account.deleted_at IS NULL
                 """,
                 (organization_id, username),
             ).fetchone()
@@ -436,7 +439,7 @@ class OrganizationStore:
                 return None
             if password_hash is None:
                 account = db.execute(
-                    "SELECT username FROM bank_account WHERE username = %s", (username,),
+                    "SELECT username FROM bank_account WHERE username = %s AND deleted_at IS NULL", (username,),
                 ).fetchone()
                 if not account:
                     raise MembershipConflict("Войдите в существующую учётную запись или создайте новую.")

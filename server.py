@@ -14,8 +14,12 @@ from workspace import WorkspaceError, execute, find_run, get_workspace, publish,
 
 PUBLIC = Path(__file__).parent / "public"
 ASSETS = {
+    "/recover": ("account-security.html", "text/html; charset=utf-8"),
+    "/admin": ("account-security.html", "text/html; charset=utf-8"),
     "/vi-coast.webp": ("vi-coast.webp", "image/webp"),
     "/darning-logo.png": ("darning-logo.png", "image/png"),
+    "/darning-logo-2.png": ("darning-logo-2.png", "image/png"),
+    "/darning-swap-theme.png": ("darning-swap-theme.png", "image/png"),
     "/darning-icon.png": ("darning-icon.png", "image/png"),
     "/model-setup.py": ("model-setup.py", "application/octet-stream"),
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -33,7 +37,8 @@ WRITES = {
 }
 RUN_PATH = re.compile(r"/api/runs/([a-f0-9]{32})")
 WEBHOOK = "/api/github/webhook"
-AUTH_WRITES = frozenset(("/api/login", "/api/logout", "/api/register", "/api/invite/inspect", "/api/invite/accept"))
+AUTH_WRITES = frozenset(("/api/login", "/api/logout", "/api/register", "/api/invite/inspect", "/api/invite/accept",
+                         "/api/recovery/request", "/api/recovery/complete"))
 LOGGER = logging.getLogger(__name__)
 
 
@@ -119,6 +124,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def auth_route(self, path, payload):
         cookie = self.headers.get("Cookie")
+        if path == "/api/recovery/request":
+            from account_recovery import request_reset
+            from delivery import account_smtp
+            from workspace import SMTP
+            self.send_json(request_reset(self.app, payload, account_smtp(SMTP)), 202)
+            return
+        if path == "/api/recovery/complete":
+            from account_recovery import complete_reset
+            self.send_json(complete_reset(self.app, payload))
+            return
         if path == "/api/logout":
             self.send_json({"viewer": None}, headers=(("Set-Cookie", self.app.auth.end(cookie)),))
             return
@@ -179,6 +194,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def get_route(self):
         path, _, raw_query = self.path.partition("?")
+        if path.startswith("/api/ci/"):
+            self.ci_route(path, raw_query)
+            return
         if path == "/legal" or path.startswith("/legal/"):
             from case_legal import DOCUMENTS, document_page
             slug = path.removeprefix("/legal").strip("/")
@@ -227,7 +245,7 @@ class Handler(BaseHTTPRequestHandler):
                                               include_templates=query.get("templates") != "0") | {"boundRepository":bound["repository"] if bound else None,
                         "legacyBoundId":bound["bindingId"] if bound else None, "boundRepositories":repositories,
                         "inference":case_model.view(service.store,project),"canManageIntegrations":self.studio_manager(actor,project),
-                        "telegramAvailable":bool(self.app)}
+                        "modelConnections":case_model.connections(service.store,project),"telegramAvailable":bool(self.app)}
             elif path == "/api/telegram":
                 if not self.app or not self.studio_manager(actor,project):
                     raise WorkspaceError("Требуются права руководителя проекта.",403)
@@ -237,6 +255,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(data)
             return
         if path in ASSETS:
+            if path in ("/admin", "/recover") and not self.app:
+                raise WorkspaceError("Учётные записи доступны в серверной версии.", 404)
+            if path == "/admin":
+                from account_recovery import require_admin
+                require_admin(self.authorize())
             file, mime = ASSETS[path]
             self.send_content(200, (PUBLIC / file).read_bytes(), mime)
             return
@@ -303,6 +326,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def post_route(self):
         path, _, raw_query = self.path.partition("?")
+        if path.startswith("/api/ci/"):
+            self.ci_route(path, raw_query)
+            return
         if self.app and path == WEBHOOK:
             self.send_json(self.app.webhook(self.headers, self.read_body(1_048_576)), 202)
             return
@@ -317,7 +343,7 @@ class Handler(BaseHTTPRequestHandler):
             name = path.removeprefix("/api/")
             portal_name = name if name in PORTAL_WRITES else ""
         auth_route = self.app and path in AUTH_WRITES
-        studio = path in ("/api/studio", "/api/telegram", "/api/source")
+        studio = path in ("/api/studio", "/api/studio/discuss", "/api/telegram", "/api/source")
         if path not in WRITES and not portal_name and not auth_route and not studio:
             raise WorkspaceError("Маршрут не найден.", 404)
         actor = self.authorize() if self.app and not auth_route else None
@@ -326,7 +352,7 @@ class Handler(BaseHTTPRequestHandler):
         if (origin and origin != expected) or self.headers.get("Sec-Fetch-Site") == "cross-site":
             raise WorkspaceError("Запрос пришёл с другого адреса.", 403)
         if studio:
-            project, org = self.studio_scope(self.query(raw_query), actor, write=True)
+            project, org = self.studio_scope(self.query(raw_query), actor, write=path != "/api/studio/discuss")
             if self.app:
                 self.app.signals.limit(actor.username, "studio", 35, required=True)
         if self.app and path=="/api/runs":
@@ -338,6 +364,12 @@ class Handler(BaseHTTPRequestHandler):
         self.validate_strings(payload)
         if studio:
             service = get_studio(self.app)
+            if path == "/api/studio/discuss":
+                from case_ai_review import discuss
+                if self.app:
+                    self.app.signals.limit(actor.username,"finding-discussion",8,required=True)
+                self.send_json(discuss(service.store,project,payload))
+                return
             if path=="/api/source":
                 from case_repository import commit_list
                 if payload.get("action")!="commits":
@@ -398,6 +430,47 @@ class Handler(BaseHTTPRequestHandler):
                     part.encode("utf-8")
             if isinstance(item, (dict, list)):
                 Handler.validate_strings(item)
+
+    def ci_route(self, path, raw_query):
+        if not self.app:
+            raise WorkspaceError("Ключи CI доступны в серверном режиме.", 503)
+        from case_ci_control import credential, dispatch, manage_keys
+        from portal_service import project_id
+        path = path.removesuffix("/")
+        write = self.command == "POST"
+        if path == "/api/ci/keys":
+            query = self.query(raw_query)
+            if set(query) != {"project"}:
+                raise WorkspaceError("Укажите проект.")
+            actor = self.app.auth.session(self.headers.get("Cookie"))
+            if not actor:
+                raise WorkspaceError("Войдите на сайт для управления ключами CI.", 401)
+            if write and (self.headers.get("Origin", self.app.url) != self.app.url
+                          or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+                raise WorkspaceError("Запрос пришёл с другого адреса.", 403)
+            if write:
+                self.app.signals.limit(actor.username, "ci-key-management", 30, required=True)
+            payload = self.ci_body(16_384) if write else None
+            self.send_json(manage_keys(self.app, actor, project_id(query), payload))
+            return
+        if raw_query:
+            raise WorkspaceError("Передавайте ключ CI в заголовке Authorization.")
+        prefix = "/api/ci/projects"
+        if path != prefix and not path.startswith(prefix + "/"):
+            raise WorkspaceError("Маршрут CI не найден.", 404)
+        key, actor = credential(self.app, self.headers.get("Authorization"))
+        self.app.signals.limit(key["id"], "ci-write" if write else "ci-read", 45 if write else 240, required=True)
+        parts = path[len(prefix) + 1:].split("/") if path != prefix else []
+        payload = self.ci_body(500_000) if write else None
+        result, status = dispatch(self.app, get_studio(self.app), key, actor, parts, payload, self.headers.get("Idempotency-Key"))
+        self.send_json(result, status)
+
+    def ci_body(self, maximum):
+        payload = json.loads(self.read_body(maximum))
+        if not isinstance(payload, dict):
+            raise WorkspaceError("Ожидается объект JSON.")
+        self.validate_strings(payload)
+        return payload
 
     def do_GET(self):
         self.handle_errors(self.get_route)

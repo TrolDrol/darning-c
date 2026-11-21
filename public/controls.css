@@ -1,0 +1,139 @@
+/* Shared closed controls and their open pickers, including dynamically added forms. */
+:root {
+  --select-fill: var(--raised);
+  --select-edge: var(--line-strong);
+  --select-radius: 10px;
+  --select-font: "Segoe UI", system-ui, sans-serif;
+}
+:root[data-theme="vi"] {
+  --select-fill: #302430;
+  --select-edge: #a2759b;
+  --select-radius: 3px 15px 3px 15px;
+  --select-font: var(--vi-button-font);
+}
+:root select:not([multiple]), :root select[multiple] {
+  text-overflow: ellipsis;
+  color: var(--charcoal);
+  background-color: var(--select-fill);
+  border: 1px solid var(--select-edge);
+  border-radius: var(--select-radius);
+  min-height: 40px;
+  padding: 8px 34px 8px 12px;
+  font: 500 14px/1.35 var(--select-font);
+  letter-spacing: .015em;
+  max-width: 100%;
+  min-width: 0;
+  box-shadow: inset 0 1px #ffffff0a;
+  cursor: pointer;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+:root select:is([multiple], [size]:not([size="1"])) { background-image: none; padding: 6px; cursor: default; }
+:root select:not(:disabled):hover { border-color: var(--link); }
+:root select:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
+:root select:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
+:root select option, :root select optgroup {
+  color: var(--charcoal);
+  background: var(--surface);
+  font: 500 14px/1.4 var(--select-font);
+}
+:root select option { padding: 10px 12px; border-radius: 6px; }
+:root select option:checked { background: var(--mint); color: var(--link); }
+select option:disabled { color: var(--muted); }
+@supports (appearance: base-select) and selector(::picker(select)) {
+  @media (pointer: fine) and (forced-colors: none) {
+    :root select:not([multiple]):not([size]),
+    :root select:not([multiple])[size="1"],
+    :root select::picker(select) { appearance: base-select; }
+    :root select:not([multiple]):not([size]), :root select:not([multiple])[size="1"] {
+      overflow: hidden;
+      white-space: nowrap;
+      background-image: none;
+      padding-inline-end: 12px;
+      align-items: center;
+      gap: 12px;
+    }
+    :root select::picker(select) {
+      margin-block: 6px;
+      padding: 5px;
+      max-height: min(360px, 55dvh);
+      max-inline-size: calc(100vw - 1.5rem);
+      overflow: auto;
+      border: 1px solid var(--select-edge);
+      border-radius: var(--select-radius);
+      background: var(--surface);
+      color: var(--charcoal);
+      box-shadow: 0 14px 36px #00000055;
+      scrollbar-width: thin;
+      scrollbar-color: var(--select-edge) var(--surface);
+    }
+    :root select::picker-icon { color: var(--link); margin-inline-start: auto; transition: rotate .18s ease; }
+    :root select:open::picker-icon { rotate: 180deg; }
+    :root select option { gap: 12px; min-height: 38px; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
+    :root select option:enabled:is(:hover, :focus) { background: var(--mint); color: var(--charcoal); }
+    :root select option:focus-visible { outline: 1px solid var(--link); outline-offset: -1px; }
+    :root select option:checked { background: var(--mint); color: var(--link); font-weight: 700; }
+    :root select option::checkmark { color: var(--link); }
+    :root select option:disabled { opacity: .45; cursor: not-allowed; }
+    :root[data-theme="vi"] select:open { border-color: #ffd1b3; box-shadow: 0 3px 14px -6px #ff81d5; }
+    :root[data-theme="vi"] select::picker(select) { border-color: #bc7dab; box-shadow: 0 14px 36px #13091899, inset 0 2px #ff94d8; }
+  }
+}
+
+/* Compact navigation and journal controls share the VI action-button geometry. */
+:root:root[data-theme="vi"] :is(.project-tabs a, .journal-periods button, .journal-scroll th button) {
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 13px;
+  border-radius: 3px 13px 3px 13px;
+  white-space: nowrap;
+}
+:root[data-theme="vi"] :is(.project-tabs a[aria-current], .journal-periods button[aria-pressed="true"]) {
+  background: linear-gradient(110deg, #fb83c2, #ffa797 56%, #ffdda1);
+  color: #31152c;
+  border-color: #ffd2bc;
+  box-shadow: inset 0 1px #fff7e8a0, 0 3px 0 #692e57;
+}
+:root[data-theme="vi"] .project-tabs a::after { inset-inline: 12px; bottom: 3px; }
+:root[data-theme="vi"] .journal-scroll th button { min-height: 32px; padding: 5px 8px; }
+:root:root[data-theme="vi"] .portal .link-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 34px; padding: 7px 12px; font-size: 13px;
+  border-radius: 3px 13px 3px 13px;
+}
+:root[data-theme="vi"] :is(.automation-menu-items, .journal-calendar-form, #analytics-export) {
+  border: 1px solid #a2759b;
+  border-radius: 3px 15px 3px 15px;
+  background: var(--surface);
+  color: var(--charcoal);
+  box-shadow: 0 14px 36px #13091899;
+}
+:root[data-theme="vi"] :is(.automation-menu-items, #analytics-export) :is(button, a) {
+  font-family: var(--vi-button-font);
+  border-radius: 3px 10px 3px 10px;
+  min-height: 36px;
+}
+:root[data-theme="vi"] :is(.automation-menu-items, #analytics-export) :is(button, a):hover {
+  background: #422b40;
+  color: #ffdbbb;
+}
+
+
+@media (max-width: 700px) {
+  :root[data-theme="vi"] .project-nav-row .project-tabs a { min-height: 34px; padding: 7px 10px; }
+}
+@media (forced-colors: active) {
+  :root select:not([multiple]), :root select[multiple] {
+    appearance: auto;
+    background-image: none;
+    box-shadow: none;
+    padding-inline-end: .75em;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root select, :root select::picker-icon { transition: none; }
+}

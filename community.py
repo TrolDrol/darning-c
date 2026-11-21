@@ -1,7 +1,7 @@
 """Organization news, article links and discussions in PostgreSQL."""
 
 import re
-from datetime import timezone
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -15,6 +15,20 @@ ENTRY_ID = re.compile(r"[a-f0-9]{32}")
 INVALID_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff]")
 MODERATOR_ROLES = {"owner", "moderator", "super_admin"}
 ENTRY_TABLES = {"post": "bank_news_post", "comment": "bank_news_comment"}
+
+
+def _publication_bound(value):
+    if value is None:
+        return None
+    try:
+        if not isinstance(value, str) or len(value) > 35:
+            raise ValueError
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            raise ValueError
+        return stamp.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        raise WorkspaceError("Укажите дату публикации с часовым поясом.") from None
 
 
 def _entry_id(value):
@@ -173,9 +187,13 @@ class Community:
     def __init__(self, store):
         self.store = store
 
-    def feed(self, organization_id, username, *, super_admin=False, before=None, post_id=None, scope="all"):
+    def feed(self, organization_id, username, *, super_admin=False, before=None, post_id=None, scope="all",
+             start=None, end=None):
         if scope not in ("all", "digest", "team"):
             raise WorkspaceError("Неизвестный фильтр новостей.")
+        start, end = _publication_bound(start), _publication_bound(end)
+        if start and end and start >= end:
+            raise WorkspaceError("Конец периода должен быть позже начала.")
         with self.store.connect() as db:
             role = _role(db, organization_id, username, super_admin)
             if post_id is not None:
@@ -197,17 +215,32 @@ class Community:
                     "comments": [_comment_view(row, username, role) for row in reversed(page)],
                     "nextCursor": page[-1]["id"] if len(rows) > COMMENT_PAGE_SIZE else None,
                 }
-            if not before and scope != "team":
-                # Give each organization its own discussion and moderation state for shared headlines.
-                db.execute("""
-                    INSERT INTO bank_news_post (id, organization_id, source_id, kind, title, body, url, created_at)
-                    SELECT replace(gen_random_uuid()::text, '-', ''), %s, src.id, 'article', left(src.title, 120), '', src.url, src.source_updated_at
-                    FROM (SELECT id,title,url,source_updated_at FROM bank_news_source
-                          ORDER BY source_updated_at DESC,id LIMIT 60) src
-                    WHERE NOT EXISTS (SELECT 1 FROM bank_news_post p WHERE p.organization_id=%s AND p.source_id=src.id)
-                    ON CONFLICT (organization_id, source_id) DO NOTHING
-                    """, (organization_id, organization_id))
             created_at, cursor_id = _cursor(db, "bank_news_post", organization_id, before)
+            bounds = {"org": organization_id, "start": start, "end": end,
+                      "at": created_at, "cursor": cursor_id, "limit": POST_PAGE_SIZE + 1}
+            if scope != "team":
+                # Materialize just enough headlines for this page. A stable id also
+                # gives unmaterialized ties a well-defined position after a cursor.
+                db.execute("""
+                    WITH candidates AS (
+                        SELECT COALESCE(p.id, md5(%(org)s || ':' || src.id)) AS entry_id,
+                               COALESCE(p.created_at, src.source_updated_at) AS entry_at,
+                               src.id, src.title, src.url, p.id AS saved_id
+                        FROM bank_news_source src LEFT JOIN bank_news_post p
+                          ON p.organization_id=%(org)s AND p.source_id=src.id
+                        WHERE p.hidden_at IS NULL
+                          AND src.published_at >= COALESCE(%(start)s::timestamptz, '-infinity')
+                          AND src.published_at < COALESCE(%(end)s::timestamptz, 'infinity')
+                    ), page AS (
+                        SELECT * FROM candidates WHERE (entry_at, entry_id) <
+                          (COALESCE(%(at)s::timestamptz, 'infinity'), COALESCE(%(cursor)s, ''))
+                        ORDER BY entry_at DESC, entry_id DESC LIMIT %(limit)s
+                    )
+                    INSERT INTO bank_news_post (id, organization_id, source_id, kind, title, body, url, created_at)
+                    SELECT entry_id, %(org)s, id, 'article', left(title,120), '', url, entry_at
+                    FROM page WHERE saved_id IS NULL
+                    ON CONFLICT (organization_id, source_id) DO NOTHING
+                    """, bounds)
             rows = db.execute(
                 """
                 SELECT post.*, account.display_name, src.publisher, src.byline, src.title AS source_title,
@@ -217,10 +250,12 @@ class Community:
                 LEFT JOIN bank_news_source src ON src.id = post.source_id
                 WHERE post.organization_id = %s AND post.hidden_at IS NULL
                     AND (%s = 'all' OR (post.source_id IS NOT NULL) = (%s = 'digest'))
+                    AND COALESCE(src.published_at, post.created_at) >= COALESCE(%s::timestamptz, '-infinity')
+                    AND COALESCE(src.published_at, post.created_at) < COALESCE(%s::timestamptz, 'infinity')
                     AND (post.created_at, post.id) < (coalesce(%s::timestamptz, 'infinity'), coalesce(%s, ''))
                 ORDER BY post.created_at DESC, post.id DESC LIMIT %s
                 """,
-                (organization_id, scope, scope, created_at, cursor_id, POST_PAGE_SIZE + 1),
+                (organization_id, scope, scope, start, end, created_at, cursor_id, POST_PAGE_SIZE + 1),
             ).fetchall()
             page = rows[:POST_PAGE_SIZE]
             return {

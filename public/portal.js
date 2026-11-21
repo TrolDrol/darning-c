@@ -1,5 +1,6 @@
 import {projectTabs} from "./project_hub.js";
 import {personMarkup} from "/person.js";
+import {midnight, dayString, readDate, presetRange} from "/date_range.js";
 
 const titles = {
   analytics: "Аналитика", logs: "Журнал событий", profile: "Личный кабинет",
@@ -11,12 +12,16 @@ const roles = {
   member: "Сотрудник", manager: "Руководитель проекта", editor: "Редактор", reader: "Читатель"
 };
 
+const ciScopes = {read: "Читать сценарии и результаты", run: "Запускать проверки",
+  write: "Создавать и изменять сценарии", projects: "Создавать и переименовывать проекты"};
+
 const statuses = {
   queued: ["В очереди", "neutral"], running: ["Идёт проверка", "amber"], review: ["С замечаниями", "amber"],
   passed: ["Пройдена", ""], partial: ["Проверена частично", "red"], skipped: ["Без анализа содержимого", "neutral"], failed: ["Сбой проверки", "red"]
 };
 
 const auditActions = {
+  "ci.key.create": "Создан ключ CI/CD", "ci.key.revoke": "Отозван ключ CI/CD", "project.rename": "Проект переименован",
   save_draft: "Сохранён черновик", publish: "Опубликован сценарий", enqueue: "Поставлена в очередь проверка",
   "finding.triage": "Разобрано замечание", "smtp.retry": "Повторена отправка почты", "github.retry": "Повторена отправка в GitHub",
   "organization.create": "Создано предприятие", "project.create": "Создан проект", "organization.member.set": "Назначена роль на предприятии",
@@ -28,6 +33,7 @@ const auditActions = {
 
 const dateFormat = new Intl.DateTimeFormat("ru", {dateStyle: "medium", timeStyle: "short"});
 const dayFormat = new Intl.DateTimeFormat("ru", {day: "numeric", month: "short", timeZone: "UTC"});
+const periodFormat = new Intl.DateTimeFormat("ru", {day: "numeric", month: "short", year: "numeric"});
 const numberFormat = new Intl.NumberFormat("ru");
 
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => (
@@ -99,9 +105,10 @@ function table(headers, rows) {
     </table></div>`;
 }
 
-function organizationSelector(organizations, current) {
+function organizationSelector(organizations, current, compact = false) {
   if (organizations.length === 1) return "";
-  return `<label class="field portal-label-inline">Предприятие <select data-portal-control="organization">
+  return `<label class="field portal-label-inline"><span${compact ? ' class="visually-hidden"' : ''}>Предприятие</span> <select data-portal-control="organization">
+    ${compact ? '<button type="button"><selectedcontent></selectedcontent></button>' : ''}
     ${organizations.map(item => option(item.id, item.name, current)).join("")}</select></label>`;
 }
 
@@ -196,6 +203,8 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
   let submitAction;
   let logType = "";
   let newsScope = "all";
+  let newsPeriod = "all";
+  let customNewsRange;
   let analyticsDays = 30;
   let thread;
 
@@ -235,13 +244,19 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
 
   function newsMarkup() {
     const {organizations, posts, nextCursor} = state;
-    const actions = organizations.length ? organizationSelector(organizations, organization) +
-      `<label class="field portal-label-inline">Показать <select data-portal-control="news-scope">
-        ${option("all","Все публикации",newsScope)}${option("digest","Дайджест ИБ",newsScope)}${option("team","От сотрудников",newsScope)}</select></label>` +
+    const customLabel = newsPeriod === "custom" ? periodFormat.formatRange(customNewsRange.start, customNewsRange.end) : "";
+    const actions = organizations.length ? organizationSelector(organizations, organization, true) +
+      `<label class="field"><span class="visually-hidden">Источник публикаций</span><select data-portal-control="news-scope">
+        <button type="button"><selectedcontent></selectedcontent></button>
+        ${option("all","Все публикации",newsScope)}${option("digest","Дайджест ИБ",newsScope)}${option("team","От сотрудников",newsScope)}</select></label>
+       <label class="field"><span class="visually-hidden">Период публикации</span><select data-portal-control="news-period">
+        <button type="button"><selectedcontent></selectedcontent></button>
+        ${[["all","За всё время"],["today","Сегодня"],["yesterday","Вчера"],["7","За 7 дней"],["30","За 30 дней"],["90","За 90 дней"]].map(([key,label])=>option(key,label,newsPeriod)).join("")}
+        ${customLabel ? option("custom",customLabel,newsPeriod) : ""}${option("choose","Указать даты…",newsPeriod)}</select></label>` +
       (getViewer()?.role === "reader" ? "" : button("Новая публикация", "new-post", "", true)) : "";
     return `${heading("news", "", actions)}
       <div class="portal-stack portal-feed">
-        ${posts.length ? posts.map(p => newsPost(p, getViewer()?.role === "reader")).join("") : `<div class="portal-tile">${empty(organizations.length ? "В этой ленте пока нет публикаций." : "У вас пока нет доступа к стене предприятия.")}</div>`}
+        ${posts.length ? posts.map(p => newsPost(p, getViewer()?.role === "reader")).join("") : `<div class="portal-tile">${empty(organizations.length ? "По выбранным фильтрам публикаций нет." : "У вас пока нет доступа к стене предприятия.")}</div>`}
         ${nextCursor ? `<div>${button("Ещё публикации", "more-posts")}</div>` : ""}
       </div>`;
   }
@@ -249,8 +264,11 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
   async function loadNews() {
     const [{organizations}, {projects}] = await Promise.all([request(endpoint("organizations")), request(endpoint("projects"))]);
     const selected = chooseOrganization(organizations, projects);
-    const feed = selected ? await request(endpoint("news", {organization: selected, scope:newsScope})) : {posts: []};
-    return {organizations, selected, ...feed};
+    const range = newsPeriod === "custom" ? customNewsRange : newsPeriod === "all" ? null : presetRange(newsPeriod);
+    const query = {organization: selected, scope: newsScope,
+      start:range?.start.toISOString(), end:range && midnight(range.end,1).toISOString()};
+    const feed = selected ? await request(endpoint("news", query)) : {posts: []};
+    return {organizations, selected, query, ...feed};
   }
 
   async function refreshNews(openThread) {
@@ -379,7 +397,7 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
       ${button("Назначить роль", "organization-member")}${button("Пригласить", "organization-invite", "", true)}</div>`) : "";
     const projectRoster = chosenProject ? tile(chosenProject.name,
       rosterTable(projectMembers, canManageProject, "project"), canManageProject ? `<div class="portal-actions">
-      ${button("Добавить участника", "project-member")}${button("Пригласить", "project-invite", "", true)}</div>` : "") : "";
+      ${button("Ключи CI/CD", "ci-keys")}${button("Добавить участника", "project-member")}${button("Пригласить", "project-invite", "", true)}</div>` : "") : "";
     const inviteTile = invitations.length ? tile("Действующие приглашения", list(invitations.map(invite => `
       <div><strong class="portal-card-name">${esc(invite.projectId ? chosenProject?.name : selected?.name)}</strong>
       ${roleChip(invite.projectRole || invite.organizationRole)}<p class="portal-muted">Действует до ${timestamp(invite.expiresAt)}</p></div>
@@ -408,6 +426,43 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
     ]);
     return {organizations, projects, selected: selectedId, chosenProject, canManageProject:team.canManage, organizationMembers: enterprise.members,
       projectMembers: team.members, invitations: [...enterpriseInvites.invites, ...teamInvites.invites]};
+  }
+
+  async function ciKeys() {
+    const selected = project;
+    const marker = revision;
+    const {keys, canCreateProjects} = await request(scoped("ci/keys"));
+    if (marker !== revision) return;
+    const availableProjects = state.projects.filter(p => p.organizationId === state.chosenProject.organizationId && p.role === "manager");
+    const projectName = id => state.projects.find(p => p.id === id)?.name || id;
+    showDialog("Ключи CI/CD", `${keys.length ? list(keys.map(k => `<div><strong>${esc(k.label)}</strong>
+      <p>${esc(k.scopes.map(s => ciScopes[s]).join(" · "))}</p>
+      <p class="portal-muted">${esc(k.projects.map(projectName).join(", "))}</p></div>
+      ${button("Отозвать", "ci-revoke", k.id, false, true)}`)) : empty("Действующих ключей пока нет.")}
+      <h3>Новый ключ</h3><label class="field">Название<input name="name" maxlength="100" required placeholder="Например, сборка релиза"></label>
+      <fieldset><legend>Права</legend>${Object.entries(ciScopes).filter(([s]) => s !== "projects" || canCreateProjects)
+        .map(([s, text]) => `<label><input type="checkbox" name="scope" value="${s}" ${s === "read" ? "checked" : ""}> ${text}</label><br>`).join("")}</fieldset>
+      <fieldset><legend>Доступные проекты</legend>${availableProjects.map(p =>
+        `<label><input type="checkbox" name="projects" value="${esc(p.id)}" ${p.id === selected ? "checked disabled" : ""}> ${esc(p.name)}</label><br>`).join("")}</fieldset>`,
+      "Создать ключ", async data => {
+        const {token} = await request(endpoint("ci/keys", {project: selected}), {action: "create", name: data.get("name"),
+          scopes: data.getAll("scope"), projects: [selected, ...data.getAll("projects")]});
+        return () => {
+          showDialog("Ключ CI/CD создан", `<p>Сохраните ключ в секретах CI. Значение показывается один раз.</p>
+            <label class="field">Bearer-ключ<input readonly data-ci-secret value="${esc(token)}"></label>`, null, null, false);
+          const field = dialog.querySelector("[data-ci-secret]");
+          field.focus();
+          field.select();
+        };
+      });
+  }
+
+  function revokeCiKey(id) {
+    const selected = project;
+    showDialog("Отозвать ключ CI/CD?", "<p>Новые запросы с этим ключом перестанут приниматься.</p>", "Отозвать", async () => {
+      await request(endpoint("ci/keys", {project: selected}), {action: "revoke", id});
+      return ciKeys;
+    });
   }
 
   function changeMember(scope, username) {
@@ -523,7 +578,7 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
     const marker = revision;
     control.disabled = true;
     try {
-      const {posts, nextCursor} = await request(endpoint("news", {organization, scope:newsScope, before: state.nextCursor}));
+      const {posts, nextCursor} = await request(endpoint("news", {...state.query, before: state.nextCursor}));
       if (marker !== revision) return;
       const existing = new Set(state.posts.map(post => post.id));
       const firstNew = state.posts.length;
@@ -546,6 +601,8 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
     "new-project": () => createSpace("projects"),
     "organization-member": id => changeMember("organization", id),
     "project-member": id => changeMember("project", id),
+    "ci-keys": ciKeys,
+    "ci-revoke": revokeCiKey,
     "organization-invite": () => inviteMember("organization"),
     "project-invite": () => inviteMember("project"),
     "revoke-invite": revokeInvite,
@@ -612,10 +669,22 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
       logType = target.value;
       update(logsMarkup());
       page.querySelector('[data-portal-control="log-type"]')?.focus();
-    } else if (control === "news-scope") {
-      newsScope = target.value;
+    } else if (control === "news-period" && target.value === "choose") {
+      target.value = newsPeriod;
+      const current = newsPeriod === "custom" ? customNewsRange : presetRange(newsPeriod === "all" ? "7" : newsPeriod);
+      showDialog("Даты публикации", `<label class="field">С<input type="date" name="start" required value="${dayString(current.start)}"></label>
+        <label class="field">По включительно<input type="date" name="end" required value="${dayString(current.end)}"></label>`, "Применить", data => {
+        const start = readDate(data.get("start")), end = readDate(data.get("end"));
+        if (start > end) throw new Error("Начальная дата должна быть раньше конечной или совпадать с ней.");
+        newsPeriod = "custom";
+        customNewsRange = {start, end};
+        return () => refreshNews();
+      });
+    } else if (control === "news-scope" || control === "news-period") {
+      if (control === "news-scope") newsScope = target.value;
+      else newsPeriod = target.value;
       await render("news");
-      page.querySelector('[data-portal-control="news-scope"]')?.focus();
+      page.querySelector(`[data-portal-control="${control}"]`)?.focus();
     } else if (control === "analytics-period") {
       analyticsDays = Number(target.value);
       await render("analytics");
@@ -665,6 +734,9 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
 
   dialog.addEventListener("cancel", event => {
     if (dialog.querySelector("form[data-busy]")) event.preventDefault();
+  });
+  dialog.addEventListener("close", () => {
+    if (!dialog.open && dialog.querySelector("[data-ci-secret]")) dialog.replaceChildren();
   });
 
   return {render, leave, share};

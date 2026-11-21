@@ -126,8 +126,13 @@ main.garden-home:has(.project-screen) { background: var(--background) url("/glas
 .portal-card-name { display: block; font-size: 1.02rem; color: var(--forest-dark); }
 .portal-label-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .portal-label-inline select { width: auto; min-width: min(100%, 190px); }
-.portal-post { max-width: 840px; }
-.portal-feed { width: min(100%, 840px); }
+.page:has(.portal-feed) { max-width: none; }
+.portal-feed { width: 100%; }
+.portal:has(.portal-feed) .portal-head-actions { align-items: center; }
+.portal:has(.portal-feed) .portal-head-actions :is(select, .button) { min-height: 40px; }
+.portal:has(.portal-feed) .portal-head-actions .field { margin: 0; }
+.portal:has(.portal-feed) .portal-head-actions select { height: 40px; max-width: min(100%, 26ch); }
+.portal:has(.portal-feed) selectedcontent { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .portal-post .portal-tile-head { align-items: flex-start; }
 .portal-post-meta { display: flex; align-items: center; gap: 5px 10px; flex-wrap: wrap; margin-top: 5px; }
 .portal-post-body, .portal-comment p:not(.portal-muted) { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -160,6 +165,8 @@ main.garden-home:has(.project-screen) { background: var(--background) url("/glas
 }
 
 @media (max-width: 460px) {
+  .portal:has(.portal-feed) .portal-head-actions > * { flex: 1 1 140px; }
+  .portal:has(.portal-feed) .portal-head-actions select { width: 100%; max-width: 100%; }
   .portal-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .portal-list > li { align-items: start; }
   .portal-head-actions { width: 100%; }

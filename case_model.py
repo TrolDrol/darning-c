@@ -174,8 +174,20 @@ def crypt(store,project,endpoint,data,encrypt):
     except (ImportError,ValueError,OSError):
         raise WorkspaceError("Для ключей модели установите зависимости и настройте мастер-ключ.",503) from None
 
-def record(store,project):
+def connection_name(name):
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", name):
+        raise WorkspaceError("Имя подключения должно содержать до 48 латинских букв, цифр, дефисов или подчёркиваний.")
+    return name
+
+def connections(store, project):
     with store.connection() as q:
+        return [row["name"] for row in q("SELECT name FROM studio_node_model WHERE project_id=? ORDER BY name", (project,)).fetchall()]
+
+def record(store,project,connection=None):
+    with store.connection() as q:
+        if connection is not None:
+            return q("SELECT endpoint,model,key_cipher,fingerprint FROM studio_node_model WHERE project_id=? AND name=?",
+                     (project,connection_name(connection))).fetchone()
         return q("SELECT endpoint,model,key_cipher,fingerprint FROM studio_model WHERE project_id=?",(project,)).fetchone()
 
 def view(store,project):
@@ -201,7 +213,10 @@ def check(profile):
 
 def save(store,project,payload):
     probe=payload.get("probe") is True
+    connection=connection_name(payload["connection"]) if "connection" in payload else None
     if payload.get("useDefault") is True:
+        if connection is not None:
+            raise WorkspaceError("Для именованного подключения укажите сервер и модель.")
         if probe:
             check(None)
             return {"checked":True}
@@ -216,7 +231,7 @@ def save(store,project,payload):
     key=payload.get("apiKey")
     if key is not None and (not isinstance(key,str) or len(key)>8192 or any(ord(c)<33 or ord(c)>126 for c in key)):
         raise WorkspaceError("Проверьте API-ключ модели.")
-    previous=record(store,project)
+    previous=record(store,project,connection)
     same_endpoint=bool(previous and previous["endpoint"]==endpoint)
     fingerprint=payload.get("fingerprint",previous["fingerprint"] if same_endpoint else "")
     if (not isinstance(fingerprint,str) or (fingerprint and
@@ -230,6 +245,15 @@ def save(store,project,payload):
         check(Profile(endpoint,model,key or "",True,fingerprint,project))
         return {"checked":True,"endpoint":endpoint,"model":model}
     encrypted=crypt(store,project,scope,key,True) if key else ""
+    if connection is not None:
+        with store.connection() as q:
+            q("""INSERT INTO studio_node_model(project_id,name,endpoint,model,key_cipher,fingerprint) VALUES(?,?,?,?,?,?)
+                 ON CONFLICT(project_id,name) DO UPDATE SET endpoint=excluded.endpoint,model=excluded.model,
+                 key_cipher=CASE WHEN ?=1 AND studio_node_model.endpoint=excluded.endpoint AND
+                 studio_node_model.fingerprint=excluded.fingerprint THEN studio_node_model.key_cipher
+                 ELSE excluded.key_cipher END, fingerprint=excluded.fingerprint""",
+              (project,connection,endpoint,model,encrypted,fingerprint,int(key is None)))
+        return {"connection":connection,"model":model}
     with store.connection() as q:
         q("""INSERT INTO studio_model(project_id,endpoint,model,key_cipher,fingerprint) VALUES(?,?,?,?,?)
              ON CONFLICT(project_id) DO UPDATE SET endpoint=excluded.endpoint,model=excluded.model,
@@ -241,8 +265,10 @@ def save(store,project,payload):
     return view(store,project)
 
 @contextmanager
-def using(store,project):
-    r=record(store,project)
+def using(store,project,connection=None):
+    r=record(store,project,connection)
+    if connection is not None and not r:
+        raise WorkspaceError("Выбранное подключение модели отсутствует в проекте.")
     profile=None
     if r:
         key=crypt(store,project,key_scope(r["endpoint"],r["fingerprint"]),r["key_cipher"],False) if r["key_cipher"] else ""

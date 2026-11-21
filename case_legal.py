@@ -30,7 +30,8 @@ def document_page(slug):
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(title)} · Штопка</title><link rel="icon" type="image/png" href="/darning-icon.png">
 <script src="/theme.js"></script><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/workspace_ui.css">
-<link rel="stylesheet" href="/themes.css"><link rel="stylesheet" href="/branding.css"><link rel="stylesheet" href="/buttons.css"></head>
+<link rel="stylesheet" href="/themes.css"><link rel="stylesheet" href="/branding.css"><link rel="stylesheet" href="/buttons.css">
+<link rel="stylesheet" href="/vi-buttons.css"><link rel="stylesheet" href="/local-header.css"><link rel="stylesheet" href="/controls.css"></head>
 <body class="legal-page"><header class="masthead"><a class="brand" href="/"><img src="/darning-logo.png" alt="Штопка" width="142" height="32"></a><button type="button" data-theme-toggle aria-label="Сменить тему"></button></header>
 <main><article><a href="/legal">Документы сервиса</a><h1>{escape(title)}</h1>{content}
 <small>Редакция {POLICY_VERSION} · Заглушка</small><nav aria-label="Юридические документы"><ul>{links}</ul></nav>

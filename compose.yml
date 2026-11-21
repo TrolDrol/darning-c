@@ -18,6 +18,12 @@ x-smtp: &smtp
   BANK_SMTP_TO: ${BANK_SMTP_TO:-}
   BANK_SMTP_SECURITY: ${BANK_SMTP_SECURITY:-}
 
+x-account-mail: &account-mail
+  BANK_ACCOUNT_SMTP_HOST: ${BANK_ACCOUNT_SMTP_HOST:-}
+  BANK_ACCOUNT_SMTP_PORT: ${BANK_ACCOUNT_SMTP_PORT:-}
+  BANK_ACCOUNT_SMTP_FROM: ${BANK_ACCOUNT_SMTP_FROM:-}
+  BANK_ACCOUNT_SMTP_SECURITY: ${BANK_ACCOUNT_SMTP_SECURITY:-}
+
 x-github: &github
   BANK_GITHUB_APP_ID: ${BANK_GITHUB_APP_ID:-}
   BANK_GITHUB_APP_SLUG: ${BANK_GITHUB_APP_SLUG:-}
@@ -145,7 +151,7 @@ services:
     <<: *runtime
     command: ["python", "-B", "server.py"]
     environment:
-      <<: [*runtime-env, *smtp, *github, *ai]
+      <<: [*runtime-env, *smtp, *account-mail, *github, *ai]
       BANK_AI_KEY_FILE: /run/bank-integrations/ai_key
       BANK_ADMIN_USER: ${BANK_ADMIN_USER:-admin}
       BANK_ADMIN_PASSWORD_FILE: /run/darning/admin/password
@@ -195,7 +201,9 @@ services:
     <<: *runtime
     command: ["python", "-B", "production_worker.py", "delivery"]
     environment:
-      <<: [*runtime-env, *smtp, *github]
+      <<: [*runtime-env, *smtp, *account-mail, *github]
+      BANK_ACCOUNT_SMTP_USER: ${BANK_ACCOUNT_SMTP_USER:-}
+      BANK_ACCOUNT_SMTP_PASSWORD_FILE: /run/bank-integrations/account_smtp_password
       BANK_SMTP_USER: ${BANK_SMTP_USER:-}
       BANK_SMTP_PASSWORD_FILE: /run/bank-integrations/smtp_password
       BANK_GITHUB_PRIVATE_KEY_FILE: /run/bank-integrations/github_private_key
@@ -238,6 +246,7 @@ services:
 
   news:
     <<: *runtime
+    profiles: [online-news]
     command: ["python", "-B", "case_news.py", "--watch"]
     environment:
       BANK_DATABASE_URL: postgresql://bank@postgres:5432/bank

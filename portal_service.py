@@ -11,13 +11,14 @@ from organization_store import MembershipConflict
 from production_store import DEFAULT_PROJECT
 from report_export import export_history, export_report
 from workspace import PRESETS, SMTP, WorkspaceError, now, validate_spec
+from delivery import account_smtp
 
 
 READS = frozenset(("organizations", "projects", "profile", "analytics", "logs", "export", "members", "invitations",
                    "news", "overview", "issues", "issue", "repository", "project/sources", "release/runs",
-                   "release", "release/export"))
+                   "release", "release/export", "account/email", "admin/users"))
 WRITES = frozenset(("organizations", "projects", "members", "invitations", "news", "news/comments", "news/moderate",
-                    "issue", "repository", "policy/simulate", "account/profile"))
+                    "issue", "repository", "policy/simulate", "account/profile", "account/email", "admin/users"))
 IDENTIFIER = re.compile(r"(?:default|[a-f0-9]{32})")
 
 
@@ -67,6 +68,12 @@ class PortalService:
         return project["organizationId"], project["id"], project["role"] == "manager" and actor.role != "reader"
 
     def get(self, name, actor, query):
+        if name == "admin/users":
+            from account_recovery import list_users
+            return list_users(self.app, actor, query)
+        if name == "account/email":
+            from case_account_email import status
+            return status(self.store, actor.username, account_smtp(SMTP))
         if name == "organizations":
             return {"organizations": self.organizations(actor)}
         if name == "projects":
@@ -80,7 +87,8 @@ class PortalService:
         if name == "news":
             org = self.organization(actor, query.get("organization"))
             return self.community.feed(org["id"], actor.username, super_admin=actor.super_admin,
-                                       before=query.get("before"), post_id=query.get("postId"), scope=query.get("scope", "all"))
+                                       before=query.get("before"), post_id=query.get("postId"), scope=query.get("scope", "all"),
+                                       start=query.get("start"), end=query.get("end"))
         if name in ("members", "invitations"):
             org, project, allowed = self.management_scope(actor, query)
             if name == "members":
@@ -152,6 +160,12 @@ class PortalService:
         raise WorkspaceError("Маршрут не найден.", 404)
 
     def post(self, name, actor, query, payload):
+        if name == "admin/users":
+            from account_recovery import manage_user
+            return manage_user(self.app, actor, payload)
+        if name == "account/email":
+            from case_account_email import manage
+            return manage(self.store, self.app.signals, actor.username, payload, account_smtp(SMTP))
         if name == "account/profile":
             if set(payload) - {"displayName", "avatar"}:
                 raise WorkspaceError("Можно изменить только имя и аватар.")

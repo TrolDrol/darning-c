@@ -5,7 +5,7 @@ from hashlib import sha256
 
 from psycopg.types.json import Jsonb
 
-from analyzers import RULES
+from analyzers import REPORT_RULES as RULES
 from case_unified import standard_finding
 from issue_store import record_scan
 

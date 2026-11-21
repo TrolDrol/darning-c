@@ -40,6 +40,7 @@ RULES = {
     }
 } | PROJECT_RULES
 
+REPORT_RULES = RULES | {"JSON-KEYS": {"engine": "json_keys"}}
 class JsonFields:
     """Retain exact value positions after validating a JSON document."""
 

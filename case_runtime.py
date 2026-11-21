@@ -15,7 +15,7 @@ from case_archive import archive_snapshot, decode_archive, repository_inventory
 from delivery import smtp_config, send_summary
 from workspace import WorkspaceError, folder_inventory, repository_files
 import case_model
-from case_graph import is_bound_source
+from case_graph import TRIGGERS, is_bound_source
 from case_repository import github_error, markers, public_snapshot, resolve_repository, selected_revision, snapshot, source_files, source_marker
 from github_integration import GitHubError
 
@@ -27,6 +27,8 @@ def scan_file(kind, path, params):
     directory = params.get("directory")
     if directory and not path.startswith(directory + "/"):
         return False
+    if kind == "json_keys":
+        return path.lower().endswith(".json")
     if kind == "sast":
         language = ("kotlin" if applicable(path, "sast") else "python" if path.lower().endswith(".py")
                     else "json" if path.lower().endswith(".json") else None)
@@ -158,6 +160,8 @@ class Studio:
         if action=="save":
             node=next((n for n in graph["nodes"] if n["type"]=="source"), None)
             reference=node["params"].get("repository") if node else None
+            if complete and not reference and any(n["type"] in ("github_pr", "github_push") for n in graph["nodes"]):
+                raise WorkspaceError("В блоке «Репозиторий» выберите подключённый репозиторий для событий GitHub.")
             if is_bound_source(reference):
                 bound=source_marker(self.store,project,reference)
                 if not bound:
@@ -170,7 +174,8 @@ class Studio:
             if payload.get("enableSchedule") is True and not complete:
                 raise WorkspaceError("Завершите граф перед включением расписания.")
             return self.store.save(project, graph, selected, name=payload.get("name"), complete=complete,
-                                   enable_schedule=payload.get("enableSchedule") is True)
+                                   enable_schedule=payload.get("enableSchedule") is True,
+                                   expected_revision=payload.get("expectedRevision"))
         if action=="template":
             if "scope" not in payload:
                 return self.store.template(organization, graph, payload.get("name"), payload.get("description"))
@@ -283,7 +288,7 @@ class Studio:
                     report["source"]["inventory"] = payload.get("inventory") or repository_inventory(files)
                 trace.source(files,report["source"]["revision"])
                 return sorted(files)
-            elif kind in ("secrets","sca","sast"):
+            elif kind in ("secrets","sca","sast","json_keys"):
                 checked = {path: body for path, body in files.items() if scan_file(kind, path, params)}
                 inputs = dict(checked)
                 if kind == "sca":
@@ -329,6 +334,11 @@ class Studio:
                 if kind == "sca" and payload.get("dependencyMetrics"):
                     metric_files.update(inputs)
                 return results
+            elif kind == "ai_review":
+                from case_ai_review import review
+                with case_model.using(self.store,project,params.get("connection")), case_model.for_node(params.get("model")):
+                    info = review(*analyze("ai_review", files, None))
+                report.setdefault("aiReviews", {})[active_id] = info
             elif kind=="explain":
                 with case_model.for_node(params.get("model")):
                     profile = case_model.active()
@@ -363,8 +373,10 @@ class Studio:
                 active_id=event["id"]
                 inherited = set()
                 inputs = trace.data["inputs"][active_id]
-                if event["type"] in ("manual", "schedule"):
+                if event["type"] in TRIGGERS:
                     inputs["trigger"] = payload.get("trigger", "manual")
+                    if "event" in payload:
+                        inputs["event"] = payload["event"]
                 for edge in predecessors[active_id]:
                     output = trace.data["outputs"].get(edge["from"], {})
                     if output.get("port") == edge["port"]:
@@ -374,7 +386,7 @@ class Studio:
                 advice_by_node[active_id] = {active_id} if event["type"] in ("explain", "verify") else inherited
             if event["type"]=="source" and event["status"]=="done":
                 event["output"]["files"]=len(files)
-            if event["type"] in ("secrets","sca","sast") and event["status"]!="skipped":
+            if event["type"] in ("secrets","sca","sast","json_keys") and event["status"]!="skipped":
                 event["input"]["files"]=input_counts.get(event["id"], 0)
                 if event["status"] == "done":
                     trace.data["outputs"][event["id"]]["coverage"] = scanner_outputs[event["id"]]
@@ -393,9 +405,12 @@ class Studio:
                     on_input=trace.capture_input, on_ports=trace.capture_ports,
                 )
             inspected = any(item["status"] == "done" for item in report["coverage"])
-            inspected |= any(item["type"] == "regex" and item["status"] == "done" for item in report["stages"])
-            partial = any(item["status"] == "error" for item in report["coverage"])
-            report["status"] = "partial" if partial else "review" if report["findings"] else "passed" if inspected else "skipped"
+            inspected |= any(item["type"] in ("regex", "custom") and item["status"] == "done" for item in report["stages"])
+            reviews = report.get("aiReviews", {}).values()
+            inspected |= any(item["filesExamined"] for item in reviews)
+            partial = any(item["status"] == "error" for item in report["coverage"]) or any(item["rejected"] for item in reviews)
+            needs_review = report["findings"] or any(item["suggestions"] for item in reviews)
+            report["status"] = "partial" if partial else "review" if needs_review else "passed" if inspected else "skipped"
             if not inspected and not partial:
                 report["skipReason"] = "В выбранной версии нет текстовых файлов для активных узлов проверки."
         except Exception as exc:

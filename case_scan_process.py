@@ -17,6 +17,12 @@ def main():
     try:
         if kind == "sast":
             findings = graph_sast(files)
+        elif kind == "ai_review":
+            from case_ai_review import candidates
+            findings = candidates(files)
+        elif kind == "json_keys":
+            from case_json_keys import inspect
+            findings = inspect(files)
         elif kind == "sca":
             items, errors = manifest_findings(files, advisories)
             paths = sorted(path for path in files if applicable(path, kind))

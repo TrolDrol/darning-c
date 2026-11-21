@@ -8,15 +8,16 @@ export const portTypes = {
   values:"strings", count:"int", matches:"strings", found:"bool"
 };
 export const typeNames = {flow:"Поток", strings:"Список строк", int:"Целое число", bool:"Да / нет"};
+export const triggerTypes = ["manual", "schedule", "github_pr", "github_push", "webhook"];
 export function outputPorts(type) {
   if (type === "source") return ["next","paths"];
-  if (type === "regex") return ["count","matches","found"];
+  if (["regex","custom"].includes(type)) return ["count","matches","found"];
   if (type === "condition") return ["true","false"];
   return ["next"];
 }
 export function inputPorts(type) {
-  if (type === "manual" || type === "schedule") return [];
-  if (type === "regex") return ["in","values"];
+  if (triggerTypes.includes(type)) return [];
+  if (["regex","custom"].includes(type)) return ["in","values"];
   if (type === "condition") return ["in","count","found"];
   return ["in"];
 }

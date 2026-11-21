@@ -1,0 +1,56 @@
+/* Header controls share the prototype's styling within the existing masthead. */
+.masthead :is([data-theme-toggle], #page-help, #account-menu-toggle) {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  flex: none;
+}
+.masthead #account-menu-toggle {
+  color: var(--charcoal);
+  border: 1px solid var(--line-strong);
+  background: var(--raised);
+}
+:root[data-theme="vi"] .masthead :is(#page-help, #account-menu-toggle):not([hidden]) {
+  border: 1px solid #a2759b;
+  border-radius: 3px 13px 3px 13px;
+  background: #302430;
+  color: #ffdbbb;
+  box-shadow: inset 0 1px #ffffff12, 0 3px 0 #160f1c;
+}
+:root[data-theme="vi"] .masthead :is(#page-help, #account-menu-toggle):not([hidden]):hover {
+  background: #472c43;
+  border-color: #ffe0b8;
+}
+:root[data-theme="vi"] .masthead button[data-theme-toggle]:not([hidden]) {
+  padding: 0;
+  border: 1px solid #dc70df;
+  border-radius: 11px;
+  background: #110816;
+  box-shadow: 0 3px 0 #160f1c;
+  overflow: hidden;
+}
+:root[data-theme="vi"] .masthead [data-theme-toggle] img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+:root[data-theme="vi"] .masthead button[data-theme-toggle]::before,
+:root[data-theme="vi"] .masthead button[data-theme-toggle]::after { content: none; }
+:root[data-theme="vi"] .account-tools[open] > div {
+  border-color: #a65c99;
+  border-radius: 3px 18px 3px 18px;
+  box-shadow: 0 14px 36px #0c051a99;
+}
+:root[data-theme="vi"] .account-tools :is(button, a):hover {
+  color: #ffdbbb;
+  background: #422b40;
+}
+@media (max-width: 690px) {
+  .masthead :is([data-theme-toggle], #page-help, #account-menu-toggle) {
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+  }
+}

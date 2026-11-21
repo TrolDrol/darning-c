@@ -221,10 +221,19 @@ class Application:
             return {"ignored": True}
         if isinstance(routed, dict):
             return routed
-        project, event = routed
+        project, event, binding, studio_event = routed
+        legacy = self._pull_request_run(project, event)
+        from case_store import StudioStore
+        from case_triggers import enqueue_github
+        studio_runs = enqueue_github(StudioStore(self.store), project, binding, studio_event)
+        if studio_runs:
+            return (legacy or {}) | {"studioRuns": studio_runs}
+        return legacy or {"ignored": True}
+
+    def _pull_request_run(self, project, event):
         version = self.store.get_workflow(project)["version"]
         if version["spec"]["trigger"] != "pull_request":
-            return {"ignored": True}
+            return None
         baseline = self.store.get_latest_run(event["lineage"], statuses=("passed", "review"), project_id=project)
         run = new_run(
             version, f"{event['repository']} · PR #{event['prNumber']}", event["headSha"], "pull_request",
@@ -240,7 +249,7 @@ class Application:
                     "AND report->'event'->>'baseSha' = %s", (project, key, event["baseSha"]),
                 ).fetchone()
             if prior:
-                return prior
+                return dict(prior)
         key += ":" + event["bindingId"] + ":" + event["baseSha"]
         queued = self.store.enqueue(run, "scan", {}, dedupe_key=key, actor="github", project_id=project)
         self.signals.notify("scan")

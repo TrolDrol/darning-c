@@ -45,6 +45,11 @@ def standard_finding(raw, index=1):
                                 "line": raw["line"], "column": raw.get("column"), "fingerprint": raw["fingerprint"],
                                 "evidence": raw["title"]}
     rule = {"SECRET": "SEC-001", "SAST": "KT-001", "SCA": "DEP-001"}[raw["category"]]
+    if raw.get("class") == "json-duplicate-key":
+        return {"id": f"JSON-KEYS-{index}", "ruleId": "JSON-KEYS", "engine":"json_keys", "level":"medium",
+                "file": raw["path"], "line": raw["line"], "column": raw["column"], "fingerprint":raw["fingerprint"],
+                "title": raw["title"], "evidence":raw["description"], "risk":raw["description"], "fix":raw["fix"],
+                "verify":"Запустите проверку повторяющихся ключей на исправленном файле."}
     policy = RULES[rule]
     path = raw["path"]
     advisory = raw.get("advisoryId")
@@ -54,6 +59,7 @@ def standard_finding(raw, index=1):
             "column": None, "engine": policy["engine"], "level": "high" if raw["severity"] in ("HIGH", "CRITICAL") else "medium",
             "fingerprint": sha256(f"{rule}:{path}:{detail}".encode()).hexdigest()[:32],
             "title": raw["title"], "evidence": detail, "risk": raw.get("description") or policy["risk"],
+            **({"sourceContext": raw["sourceContext"]} if raw.get("sourceContext") else {}),
             "fix": raw.get("fix") or policy["fix"], "verify": policy["verify"]}
 
 

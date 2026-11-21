@@ -31,7 +31,7 @@ export function nodeResult(run, node, escape) {
     if (count == null) return "";
     const sample = rows || summary?.sample || [];
     return value("Находки · " + count) + (sample.length ? `<ul>${sample.slice(0, 5).map(f =>
-      `<li><strong>${e(f.class || f.category)}</strong> <code>${e([f.path,f.line].filter(v => v != null).join(":"))}</code></li>`).join("")}</ul>` : "");
+      `<li><strong>${e(f.class || f.category)}</strong> <code>${e([f.path,f.line,f.column].filter(v => v != null).join(":"))}</code></li>`).join("")}</ul>` : "");
   }
   function advice(result) {
     if (!result) return "";
@@ -43,15 +43,24 @@ export function nodeResult(run, node, escape) {
   }
   const inRows = findings(input?.refs), outRows = findings(output?.refs);
   let before = "", after = "";
-  const inData = input ? (node.type === "regex" ? {pattern:node.params.pattern} : {findings:inRows}) : stage.input && {...stage.input};
-  const outData = output ? (node.type === "regex" ? {} : {port:output.port,findings:outRows}) : stage.output && {...stage.output};
+  const stringNode = node.type === "regex" || node.type === "custom";
+  const inData = input ? (node.type === "regex" ? {pattern:node.params.pattern} : node.type === "custom" ? {steps:node.params.steps} : {findings:inRows}) : stage.input && {...stage.input};
+  const outData = output ? (stringNode ? {} : {port:output.port,findings:outRows}) : stage.output && {...stage.output};
   if (input?.trigger) {
-    before = value(input.trigger === "schedule" ? "Наступило время расписания" : "Команда ручного запуска");
+    const descriptions = {manual:"Команда ручного запуска",schedule:"Наступило время расписания",
+      github_pr:"Получено событие pull request",github_push:"Получено обновление ветки",webhook:"Получена команда CI/CD"};
+    before = value(descriptions[input.trigger] || input.trigger);
     inData.trigger = input.trigger;
+    if (input.event) {
+      inData.event = input.event;
+      before += value("Коммит · " + input.event.revision.slice(0,12));
+      if (input.event.prNumber) before += value("Pull request №" + input.event.prNumber);
+      if (input.event.ref) before += value("Ветка · " + input.event.ref.replace(/^refs\/heads\//,""));
+    }
   } else if (input?.source) {
     before = value(input.source.kind === "repository" ? "Запрошен снимок репозитория" : "Переданы файлы проекта");
     inData.source = input.source;
-  } else if (node.type !== "regex") {
+  } else if (!stringNode) {
     before = matches(inRows, stage.input);
   }
   if (input?.fileRefs) {
@@ -76,12 +85,17 @@ export function nodeResult(run, node, escape) {
   }
   const explanation = run.explanations?.[node.id];
   const receipt = run.deliveries?.[node.id];
-  if (receipt) {
+  if (node.type === "ai_review" && run.aiReviews?.[node.id]) {
+    const review=run.aiReviews[node.id];
+    before=value("Проверено файлов · "+review.filesExamined)+value("Статических признаков для модели · "+review.candidates);
+    after=value("Модель · "+(review.model || "не вызвана"))+value("Отклонено предложений · "+review.rejected)+json("Предложения для ручной проверки",review.suggestions);
+    if(outData)outData.review=review;
+  } else if (receipt) {
     after = value(receipt.channel === "telegram" ? "Telegram" : "SMTP") + value(receipt.message);
     if (outData) outData.delivery = receipt;
   } else if (stage.status !== "done") {
     after = value(stage.status === "error" ? "Шаг завершился с ошибкой до передачи результата." : "Ожидаем результат.");
-  } else if (["manual", "schedule"].includes(node.type)) {
+  } else if (["manual", "schedule", "github_pr", "github_push", "webhook"].includes(node.type)) {
     after = value("Проверка запущена.");
   } else if (node.type === "source") {
     const source = run.source || {};
@@ -93,7 +107,7 @@ export function nodeResult(run, node, escape) {
   } else if (explanation) {
     after = advice(explanation);
     if (outData) outData.recommendation = explanation;
-  } else if (node.type !== "regex") after = matches(outRows, stage.output);
+  } else if (!stringNode) after = matches(outRows, stage.output);
   if (output?.coverage) {
     outData.coverage = output.coverage;
     after += value("Успешно проверено файлов · " + output.coverage.checked);

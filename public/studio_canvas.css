@@ -50,7 +50,7 @@
   box-shadow: 0 3px 8px #11171333;
   z-index: 1;
 }
-.automation-canvas .studio-node[data-kind=manual], .automation-canvas .studio-node[data-kind=schedule] { --node-color: #80651c; background: #fbf1cf; }
+.automation-canvas .studio-node:is([data-kind=manual], [data-kind=schedule], [data-kind=github_pr], [data-kind=github_push], [data-kind=webhook]) { --node-color: #80651c; background: #fbf1cf; }
 .automation-canvas .studio-node[data-kind=source] { --node-color: #316d56; background: #e2eddc; }
 .automation-canvas .studio-node[data-kind=secrets], .automation-canvas .studio-node[data-kind=sast], .automation-canvas .studio-node[data-kind=sca] { --node-color: #3d627d; background: #e4eef2; }
 .automation-canvas .studio-node[data-kind=explain], .automation-canvas .studio-node[data-kind=verify] { --node-color: #66587e; background: #ede8f2; }

@@ -1,0 +1,222 @@
+/* VI / After Hours. Local type, sunset enamel and a moving neon light rail. */
+@font-face {
+  font-family: "VI Highway";
+  src: local("Bahnschrift");
+  font-weight: 100 900;
+  font-stretch: 75% 100%;
+  font-display: swap;
+}
+
+:root[data-theme="vi"] {
+  --vi-button-font: "VI Highway", "Bahnschrift", "Arial Narrow", sans-serif;
+  --vi-button-edge: #a2759b;
+  --vi-button-light: linear-gradient(90deg, #84f4e4, #ff81d5 52%, #ffe0a3);
+}
+
+/* Scoped to VI: the other two themes retain their own button system. */
+:root[data-theme="vi"] :is(
+  .button:not(.text), .automation-run, .automation-history,
+  .automation-top-tools button, .journal-calendar > summary,
+  .portal-table .link-button, .guide-actions [data-next], .portal .link-button,
+  .project-tabs a, .journal-periods button, .journal-scroll th button,
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--vi-button-edge);
+  border-radius: 3px 19px 3px 19px;
+  background:
+    linear-gradient(115deg, #ffffff08, transparent 48%) padding-box,
+    #302430;
+  color: #fff3ed;
+  box-shadow: inset 0 1px #ffffff12, 0 4px 0 #160f1c;
+  font-family: var(--vi-button-font);
+  font-size: 15px;
+  font-weight: 650;
+  font-stretch: condensed;
+  font-variation-settings: "wght" 650, "wdth" 80;
+  line-height: 1.3;
+  letter-spacing: .075em;
+  text-transform: uppercase;
+  text-decoration: none;
+  text-shadow: none;
+  filter: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: #ff91d833;
+  transition: translate .2s ease, border-color .2s ease, box-shadow .2s ease, background-color .2s ease;
+}
+
+/* A light reflection sweeps once on interaction; it never covers hit targets. */
+:root[data-theme="vi"] :is(
+  .button:not(.text), .automation-run, .automation-history,
+  .automation-top-tools button, .journal-calendar > summary,
+  .portal-table .link-button, .guide-actions [data-next], .portal .link-button,
+  .project-tabs a, .journal-periods button, .journal-scroll th button,
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 25%, #fff7e830 48%, transparent 70%);
+  transform: translateX(-130%);
+}
+
+/* The glow comes from a thin rail below the label, rather than the whole fill. */
+:root[data-theme="vi"] :is(
+  .button:not(.text), .automation-run, .automation-history,
+  .automation-top-tools button, .journal-calendar > summary,
+  .portal-table .link-button, .guide-actions [data-next], .portal .link-button,
+  .project-tabs a, .journal-periods button, .journal-scroll th button,
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+)::after {
+  content: "";
+  position: absolute;
+  inset: auto 15px 4px;
+  height: 2px;
+  border-radius: 2px;
+  pointer-events: none;
+  background: var(--vi-button-light);
+  box-shadow: 0 0 9px #ff81d5b0;
+  transform: scaleX(.25);
+  transform-origin: left;
+  opacity: .45;
+  transition: transform .28s ease, opacity .2s ease;
+}
+
+:root[data-theme="vi"] :is(.button.primary, .automation-bottom-tools .automation-run),
+:root[data-theme="vi"] :is(.button.primary, .automation-bottom-tools .automation-run):hover {
+  border-color: #ffd2bc;
+  background:
+    repeating-linear-gradient(0deg, #ffffff0a 0 1px, transparent 1px 4px),
+    linear-gradient(110deg, #fb83c2 0%, #ffa797 56%, #ffdda1 100%);
+  color: #31152c;
+  font-weight: 750;
+  font-variation-settings: "wght" 750, "wdth" 80;
+  box-shadow: inset 0 1px #fff7e8a0, 0 4px 0 #692e57;
+}
+
+:root[data-theme="vi"] :is(.button.primary, .automation-bottom-tools .automation-run)::after {
+  background: #572343;
+  box-shadow: none;
+  opacity: .65;
+}
+
+:root[data-theme="vi"] :is(
+  .button:not(.text), .automation-run, .automation-history,
+  .automation-top-tools button, .journal-calendar > summary,
+  .portal-table .link-button, .guide-actions [data-next], .portal .link-button,
+  .project-tabs a, .journal-periods button, .journal-scroll th button,
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+):is(:hover, :focus-visible):not(:disabled):not([aria-disabled="true"]) {
+  border-color: #ffe0b8;
+  translate: 0 -2px;
+  box-shadow: inset 0 1px #fff7e840, 0 6px 0 #160f1c, 0 9px 18px -9px #ff81d5cc;
+  filter: none;
+}
+
+:root[data-theme="vi"] :is(
+  .button:not(.text), .automation-run, .automation-history,
+  .automation-top-tools button, .journal-calendar > summary,
+  .portal-table .link-button, .guide-actions [data-next], .portal .link-button,
+  .project-tabs a, .journal-periods button, .journal-scroll th button,
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+):is(:hover, :focus-visible):not(:disabled):not([aria-disabled="true"])::before {
+  animation: vi-reflection .65s ease-out both;
+}
+
+:root[data-theme="vi"] :is(
+  .button:not(.text), .automation-run, .automation-history,
+  .automation-top-tools button, .journal-calendar > summary,
+  .portal-table .link-button, .guide-actions [data-next], .portal .link-button,
+  .project-tabs a, .journal-periods button, .journal-scroll th button,
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+):is(:hover, :focus-visible):not(:disabled):not([aria-disabled="true"])::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+:root[data-theme="vi"] :is(
+  .button:not(.text), .automation-run, .automation-history,
+  .automation-top-tools button, .journal-calendar > summary,
+  .portal-table .link-button, .guide-actions [data-next], .portal .link-button,
+  .project-tabs a, .journal-periods button, .journal-scroll th button,
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+):active:not(:disabled):not([aria-disabled="true"]) {
+  translate: 0 2px;
+  box-shadow: inset 0 2px 5px #1b0e2528, 0 1px 0 #160f1c;
+  filter: none;
+}
+
+:root[data-theme="vi"] :is(button, summary, .button, .link-button):focus-visible {
+  outline: 2px solid #9cfff0;
+  outline-offset: 4px;
+}
+
+:root[data-theme="vi"] :is(
+  .button:not(.text), .automation-run, .automation-history,
+  .automation-top-tools button, .journal-calendar > summary,
+  .portal-table .link-button, .guide-actions [data-next], .portal .link-button,
+  .project-tabs a, .journal-periods button, .journal-scroll th button,
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+):is(:disabled, [aria-disabled="true"]) {
+  border-color: #625261;
+  background: #302a31;
+  color: #bdb0bb;
+  box-shadow: none;
+  opacity: .55;
+  translate: none;
+  filter: none;
+  cursor: not-allowed;
+}
+
+:root[data-theme="vi"] :is(
+  .button, .automation-run, .automation-history,
+  .automation-top-tools button, .portal-table .link-button,
+  .guide-actions [data-next]
+):is(:disabled, [aria-disabled="true"])::before,
+:root[data-theme="vi"] :is(
+  .button, .automation-run, .automation-history,
+  .automation-top-tools button, .portal-table .link-button,
+  .guide-actions [data-next]
+):is(:disabled, [aria-disabled="true"])::after { content: none; }
+
+/* Compact controls keep their size and readable, centred symbols. */
+:root[data-theme="vi"] :is(
+  .portal-table .button, .portal-table .link-button,
+  .automation-top-tools button, .masthead [id="menu-toggle"],
+  .masthead [id="page-help"], .masthead [data-theme-toggle]
+) {
+  border-radius: 2px 12px 2px 12px;
+  font-size: 13px;
+  letter-spacing: .045em;
+}
+
+:root[data-theme="vi"] .masthead :is([id="page-help"], [data-theme-toggle])::after {
+  inset-inline: 8px;
+  bottom: 3px;
+}
+
+@keyframes vi-reflection {
+  from { transform: translateX(-130%); }
+  to { transform: translateX(130%); }
+}
+
+@media (max-width: 650px) {
+  :root[data-theme="vi"] :is(.button:not(.text), .automation-run, .automation-history, .journal-calendar > summary) {
+    font-size: 13px;
+    letter-spacing: .045em;
+    border-radius: 2px 15px 2px 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="vi"] :is(button, summary, .button),
+  :root[data-theme="vi"] :is(button, summary, .button)::before,
+  :root[data-theme="vi"] :is(button, summary, .button)::after {
+    animation: none !important;
+    transition: none !important;
+    translate: none !important;
+  }
+}

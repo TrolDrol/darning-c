@@ -1,3 +1,6 @@
+import {telegramSettings} from "/telegram_settings.js";
+import {emailSettings} from "/account_email.js";
+
 async function avatarFromFile(file) {
   if (!["image/jpeg","image/png","image/webp"].includes(file.type) || file.size > 10 * 1024 * 1024) {
     throw Error("Выберите изображение JPG, PNG или WebP размером до 10 МБ.");
@@ -14,7 +17,7 @@ async function avatarFromFile(file) {
   } finally { image.close(); }
 }
 
-export function createAccountEditor({request,getViewer,onSave}) {
+export function createAccountEditor({request,getViewer,getProject,onSave}) {
   const menu = document.querySelector(".account-tools");
   const trigger = menu.querySelector("summary");
   const dialog = document.querySelector("#profile-dialog");
@@ -26,6 +29,20 @@ export function createAccountEditor({request,getViewer,onSave}) {
   const cancel = form.querySelector("[data-profile-cancel]");
   const error = form.querySelector('[role="alert"]');
   let avatar, revision = 0, saving = false;
+  const telegram = menu.querySelector("#account-telegram");
+  menu.addEventListener("toggle", () => {
+    if (menu.open) telegram.hidden = getViewer()?.role === "reader" || getProject()?.role !== "manager";
+  });
+  telegram.onclick = () => {
+    const project = getProject();
+    if (!project || project.role !== "manager") return;
+    menu.open = false;
+    telegramSettings({request,project:project.id,projectName:project.name});
+  };
+  menu.querySelector("#account-email").onclick = () => {
+    menu.open = false;
+    emailSettings(request);
+  };
   function paint(img, src) {
     if (src && img.getAttribute("src") !== src) img.src = src;
     if (!src) img.removeAttribute("src");
@@ -37,6 +54,7 @@ export function createAccountEditor({request,getViewer,onSave}) {
   }
   function refresh() {
     const user = getViewer();
+    menu.querySelector("#account-admin").hidden = user?.role !== "super_admin";
     menu.querySelector("#account-display-name").textContent = user?.displayName || "";
     menu.querySelector("[data-avatar-default]").toggleAttribute("hidden",Boolean(user?.avatar));
     paint(menu.querySelector("[data-account-avatar]"),user?.avatar);

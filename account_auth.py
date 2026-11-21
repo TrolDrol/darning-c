@@ -70,6 +70,7 @@ class Viewer:
     display_name: str
     role: str
     avatar: str | None = None
+    session_generation: int = 0
 
     @property
     def super_admin(self):
@@ -95,7 +96,7 @@ class AccountAuth:
     def viewer(self, account):
         username = account["username"]
         role = "user" if account["passwordHash"] is not None else self.accounts.get(username, (None, "user"))[1]
-        return Viewer(username, account["displayName"], role, account.get("avatar"))
+        return Viewer(username, account["displayName"], role, account.get("avatar"), account["session_generation"])
 
     def derive(self, password, salt):
         if not self.password_slots.acquire(timeout=2):
@@ -165,11 +166,17 @@ class AccountAuth:
         if not token:
             return None
         try:
-            username = self.signals.redis.get(self.key(token))
+            value = self.signals.redis.get(self.key(token))
         except RedisError:
             raise WorkspaceError("Сессии временно недоступны.", 503) from None
-        account = self.directory.get_account(username.decode()) if username else None
-        return self.viewer(account) if account else None
+        if not value:
+            return None
+        username, _, generation = value.decode().partition(":")
+        account = self.directory.get_account(username)
+        # Sessions issued before migration 026 contained only the username.
+        if account and str(account["session_generation"]) == (generation or "0"):
+            return self.viewer(account)
+        return None
 
     def cookie(self, value, duration):
         secure = "; Secure" if self.secure else ""
@@ -182,7 +189,7 @@ class AccountAuth:
             with self.signals.redis.pipeline() as pipe:
                 if old:
                     pipe.delete(self.key(old))
-                pipe.set(self.key(token), viewer.username, ex=SESSION_TIME).execute()
+                pipe.set(self.key(token), f"{viewer.username}:{viewer.session_generation}", ex=SESSION_TIME).execute()
         except RedisError:
             raise WorkspaceError("Сессии временно недоступны.", 503) from None
         return self.cookie(token, SESSION_TIME)

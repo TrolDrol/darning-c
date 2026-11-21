@@ -11,7 +11,7 @@ from psycopg.errors import UniqueViolation
 
 from case_repository import repository_name
 from github_integration import (
-    GitHubError, VALID_REPO, object_value, parse_pull_request, positive_id,
+    GitHubError, VALID_REPO, matches_repository, object_value, parse_pull_request, positive_id,
     repository_path, sha_value, signed_event,
 )
 from production_store import DEFAULT_PROJECT, _audit
@@ -321,8 +321,10 @@ class RepositoryService:
         app = self.app.github
         kind, delivery, payload = signed_event(app, headers, raw)
         if kind == "push":
-            return {"connected": True} if self.confirm(payload) else None
-        if kind != "pull_request":
+            message = object_value(payload.get("head_commit")).get("message")
+            if isinstance(message, str) and PROOF.fullmatch(message.strip()):
+                return {"connected": True} if self.confirm(payload) else None
+        if kind not in ("pull_request", "push"):
             return None
         repo_id = object_value(payload.get("repository")).get("id")
         if not positive_id(repo_id):
@@ -336,5 +338,26 @@ class RepositoryService:
         config, binding_id, _ = binding_for(self.store, app, project, binding_id=row["binding_id"] if row else "legacy")
         if not config:
             return None
-        event = parse_pull_request(config, delivery, payload)
-        return (project, event | {"bindingId": binding_id, "paths": config.paths}) if event else None
+        from case_store import StudioStore
+        from case_triggers import enqueue_github
+        binding = {"bindingId": binding_id, "repositoryId": config.repository_id,
+                   "repository": config.repository, "installationId": config.installation_id}
+        if kind == "push":
+            if (not matches_repository(config, object_value(payload.get("repository")))
+                    or not positive_id(object_value(payload.get("installation")).get("id"))
+                    or object_value(payload.get("installation")).get("id") != config.installation_id):
+                raise GitHubError("Установка или репозиторий GitHub не разрешены.", 403)
+            ref = payload.get("ref")
+            sha = sha_value(payload.get("after"))
+            if (payload.get("deleted") or not isinstance(ref, str) or not ref.startswith("refs/heads/")
+                    or not len("refs/heads/") < len(ref) <= 1024 or not sha or sha == "0" * 40):
+                return None
+            event = {"type": "github_push", "deliveryId": delivery, "revision": sha, "ref": ref}
+            runs = enqueue_github(StudioStore(self.store), project, binding, event)
+            return {"studioRuns": runs} if runs else None
+        pr = parse_pull_request(config, delivery, payload)
+        if not pr:
+            return None
+        event = {"type": "github_pr", "deliveryId": delivery, "revision": pr["headSha"],
+                 "prNumber": pr["prNumber"], "baseSha": pr["baseSha"], "action": payload["action"]}
+        return project, pr | {"bindingId": binding_id, "paths": config.paths}, binding, event

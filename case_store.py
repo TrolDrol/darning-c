@@ -1,5 +1,6 @@
 """Durable workflow queue and team template library (PostgreSQL or local SQLite)."""
 import json
+from hashlib import sha256
 import os
 import re
 import sqlite3
@@ -15,6 +16,7 @@ from workspace import DATA, WorkspaceError
 BASE = Path(__file__).parent
 DEFAULT_AUTOMATION = "default"
 DEFAULT_NAME = "Основной сценарий"
+PROJECT_QUEUE_LIMIT = 12
 
 
 def automation_id(value):
@@ -28,6 +30,11 @@ def automation_name(value):
         raise WorkspaceError("Введите название сценария от 1 до 100 печатных символов.")
     return value.strip()
 
+
+def automation_revision(document):
+    fields = [document["automationName"], document["graph"]]
+    return sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
 class StudioStore:
     def __init__(self, postgres=None, folder=None):
         self.postgres = postgres
@@ -37,7 +44,7 @@ class StudioStore:
             self.path = folder / "studio.sqlite3"
             with self.connection() as query:
                 query("BEGIN IMMEDIATE")
-                migrations = ["007_case_studio.sql", "008_studio_model.sql"]
+                migrations = ["007_case_studio.sql", "008_studio_model.sql", "025_node_models.sql", "028_studio_triggers.sql"]
                 if "automation_id" not in {r["name"] for r in query("PRAGMA table_info(studio_run)")}:
                     migrations.append("018_project_automations.sql")
                 if "schedule_hold" not in {r["name"] for r in query("PRAGMA table_info(studio_automation)")}:
@@ -85,6 +92,9 @@ class StudioStore:
         from case_graph import NODE_TYPES
         with self.connection() as q:
             active = self.selected(q, project, selected)
+            subscription = q("SELECT kind FROM studio_event_subscription WHERE project_id=? AND automation_id=?",
+                             (project, selected)).fetchone()
+            active["activeEvent"] = subscription["kind"] if subscription else None
             automations = [{"id": DEFAULT_AUTOMATION, "name": DEFAULT_NAME}]
             automations.extend(dict(row) for row in q("SELECT id,name FROM studio_automation WHERE project_id=? ORDER BY name,id", (project,)))
             templates = ([dict(t) for t in q("SELECT id,name,description,graph FROM studio_template WHERE organization_id=? ORDER BY created_at DESC,id LIMIT 200",(organization,))]
@@ -106,10 +116,18 @@ class StudioStore:
         return {"graph": graph, "automationId": selected, "automationName": name, "scheduleTime": None,
                 "scheduleHeld": hold}
 
-    def save(self, project, graph, selected=DEFAULT_AUTOMATION, *, name=None, complete=True, enable_schedule=False):
+    def save(self, project, graph, selected=DEFAULT_AUTOMATION, *, name=None, complete=True, enable_schedule=False,
+             expected_revision=None):
         at = int(time.time())
         schedule = next((n["params"]["time"] for n in graph["nodes"] if n["type"]=="schedule"), None)
         with self.connection() as q:
+            # Serialize conditional CI writes with ordinary saves, including the virtual default graph.
+            if self.postgres:
+                q("SELECT id FROM bank_project WHERE id=? FOR UPDATE", (project,))
+            else:
+                q("BEGIN IMMEDIATE")
+            if expected_revision is not None and automation_revision(self.selected(q, project, selected)) != expected_revision:
+                raise WorkspaceError("Сценарий изменился. Получите его актуальную версию.", 409)
             if automation_id(selected) != DEFAULT_AUTOMATION:
                 if name is not None:
                     name = automation_name(name)
@@ -126,12 +144,35 @@ class StudioStore:
                         (*values, project, selected)).fetchone()
                 if not row:
                     raise WorkspaceError("Сценарий не найден.", 404)
+                self.sync_event_trigger(q, project, selected, graph, complete)
                 return {"automationId": selected, "automationName": row["name"], "graph": graph,
                         "draft": not complete, "scheduleTime": row["schedule_time"], "scheduleHeld": bool(row["schedule_hold"])}
             q("""INSERT INTO studio_graph(project_id,graph,saved_at,schedule_time) VALUES(?,?,?,?)
                  ON CONFLICT(project_id) DO UPDATE SET graph=excluded.graph,saved_at=excluded.saved_at,schedule_time=excluded.schedule_time""",
               (project, json.dumps(graph), at, schedule))
+            self.sync_event_trigger(q, project, selected, graph, complete)
         return {"graph": graph, "automationId": selected, "automationName": DEFAULT_NAME, "scheduleTime": schedule}
+
+    def sync_event_trigger(self, q, project, selected, graph, complete):
+        from case_graph import EVENT_TRIGGERS
+        if not complete:
+            return
+        trigger = next((n["type"] for n in graph["nodes"] if n["type"] in EVENT_TRIGGERS), None)
+        if trigger is None:
+            q("DELETE FROM studio_event_subscription WHERE project_id=? AND automation_id=?", (project, selected))
+            return
+        source = next(n for n in graph["nodes"] if n["type"] == "source")
+        repository = source.get("params", {}).get("repository", "")
+        if trigger in ("github_pr", "github_push"):
+            existing = q("""SELECT count(*) AS n FROM studio_event_subscription
+                            WHERE project_id=? AND kind=? AND repository=? AND automation_id<>?""",
+                         (project, trigger, repository, selected)).fetchone()["n"]
+            if existing >= PROJECT_QUEUE_LIMIT:
+                raise WorkspaceError(f"Для одного события GitHub в репозитории можно включить до {PROJECT_QUEUE_LIMIT} сценариев.", 409)
+        q("""INSERT INTO studio_event_subscription(project_id,automation_id,kind,repository,graph)
+             VALUES(?,?,?,?,?) ON CONFLICT(project_id,automation_id) DO UPDATE SET
+             kind=excluded.kind,repository=excluded.repository,graph=excluded.graph""",
+          (project, selected, trigger, repository, json.dumps(graph)))
 
     def template(self, organization, graph, name, description):
         if not isinstance(name,str) or not 1<=len(name.strip())<=100 or not isinstance(description,str) or not 1<=len(description.strip())<=500:
@@ -154,17 +195,20 @@ class StudioStore:
                   "automationId": selected, "automationName": name}
         if payload.get("createdBy"):
             report["createdBy"] = payload["createdBy"]
+        if payload.get("event"):
+            report["event"] = payload["event"]
+            report["revision"] = payload["revision"]
         q("""INSERT INTO studio_run(id,project_id,status,graph,payload,report,created_at,updated_at,automation_id)
              VALUES(?,?,'queued',?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING""",
           (key,project,json.dumps(graph),json.dumps(payload),json.dumps(report),now,now,selected))
         return report
 
-    def has_queue_capacity(self, q, project):
+    def has_queue_capacity(self, q, project, requested=1):
         if self.postgres:
             q("SELECT id FROM bank_project WHERE id=? FOR UPDATE", (project,)).fetchone()
         pending = q("SELECT count(*) AS n FROM studio_run WHERE project_id=? AND status IN ('queued','running')",
                     (project,)).fetchone()
-        return pending["n"] < 12
+        return pending["n"] + requested <= PROJECT_QUEUE_LIMIT
 
     def enqueue(self, project, graph, payload, selected=DEFAULT_AUTOMATION):
         with self.connection() as q:
@@ -217,6 +261,9 @@ class StudioStore:
                 params = next(n["params"] for n in graph["nodes"] if n["type"] == "schedule")
                 zone = params.get("timezone", "UTC")
                 local = now.astimezone(timezone.utc if zone == "UTC" else ZoneInfo(zone))
+                if ("weekdays" in params and local.isoweekday() not in params["weekdays"]
+                        or "monthDay" in params and local.day != params["monthDay"]):
+                    continue
                 due = local.replace(hour=hour, minute=minute, second=0, microsecond=0, fold=0)
                 if row["saved_at"] <= due.timestamp() <= now.timestamp():
                     scope = row["project_id"] if row["id"] == DEFAULT_AUTOMATION else f"{row['project_id']}:{row['id']}"
@@ -233,6 +280,7 @@ class StudioStore:
                 q("UPDATE studio_run SET status='failed',report=?,payload=NULL WHERE id=? AND status='running' AND updated_at<?",
                   (json.dumps(report),row["id"],int(now.timestamp())-1800))
             days = max(1,int(os.getenv("BANK_REPORT_RETENTION_DAYS","30")))
+            q("DELETE FROM studio_event_receipt WHERE created_at<?", (int(now.timestamp())-86400*days,))
             q("DELETE FROM studio_run WHERE status IN ('passed','review','failed','skipped','partial') AND updated_at<?",(int(now.timestamp())-86400*days,))
 
     def claim(self):

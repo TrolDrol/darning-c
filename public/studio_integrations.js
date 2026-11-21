@@ -1,4 +1,3 @@
-import {telegramSettings} from "/telegram_settings.js";
 import {bindGuide,installGuide} from "/model_guide.js";
 
 export function mountIntegrations(host,{request,project,overview}){
@@ -23,8 +22,7 @@ export function mountIntegrations(host,{request,project,overview}){
         <button class="button primary" type="submit">Сохранить подключение</button></div>
       <p role="status" data-feedback></p><p role="alert" class="model-settings-error" hidden></p>
     </form>`:""}
-    ${overview.telegramAvailable!==false&&canManage?`<section class="model-notifications"><div><h3>Уведомления</h3><p>Отчёты и действия по находкам в личном чате.</p></div><button type="button" class="button" data-tg>Настроить Telegram</button></section>`:""}
-    ${canManage?"":"<p>Подключение модели и Telegram настраивает руководитель проекта.</p>"}</div></details>`;
+    ${canManage?"":"<p>Подключение модели настраивает руководитель проекта.</p>"}</div></details>`;
   const describe=p=>{host.querySelector("[data-profile]").textContent=(p.custom?"Сервер проекта":"Стандартный сервер")+" · "+(p.model||"модель не настроена");};
   describe(overview.inference||{});
   const form=host.querySelector("[data-profile-form]");
@@ -95,5 +93,4 @@ export function mountIntegrations(host,{request,project,overview}){
     form.onsubmit=event=>{event.preventDefault();apply(true);};
     form.querySelector("[data-probe]").onclick=()=>apply(false);
   }
-  host.querySelector("[data-tg]")?.addEventListener("click",()=>telegramSettings({request,project}));
 }

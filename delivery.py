@@ -23,13 +23,21 @@ class SMTPConfig:
     password: str = field(repr=False)
 
 
-def smtp_config():
+def account_smtp(fallback):
+    if os.getenv("BANK_ACCOUNT_SMTP_HOST"):
+        return smtp_config("BANK_ACCOUNT_SMTP")
+    return fallback
+
+
+def smtp_config(prefix="BANK_SMTP"):
     host, sender, recipient, user, password, security, port = (
-        os.getenv(f"BANK_SMTP_{key}", "")
+        os.getenv(f"{prefix}_{key}", "")
         for key in ("HOST", "FROM", "TO", "USER", "PASSWORD", "SECURITY", "PORT")
     )
+    if prefix == "BANK_ACCOUNT_SMTP":
+        recipient = sender  # Account messages address the verified mailbox individually.
     if host and user:
-        password = secret("BANK_SMTP_PASSWORD")
+        password = secret(f"{prefix}_PASSWORD")
     if not any((host, sender, recipient, user, password, security, port)):
         return None
     security = security or "tls"
@@ -84,7 +92,10 @@ def rejection(code):
 
 
 def send_summary(config, run, port=8103, report_url=None):
-    message = summary_message(config, run, port, report_url)
+    return send_message(config, summary_message(config, run, port, report_url))
+
+
+def send_message(config, message):
     client = None
     submitting = False
     try:

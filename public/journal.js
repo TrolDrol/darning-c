@@ -1,28 +1,11 @@
 import {projectTabs} from "/project_hub.js";
 import {personMarkup} from "/person.js";
+import {midnight, dayString, readDate, presetRange} from "/date_range.js";
 const periods = [["today", "Сегодня"], ["yesterday", "Вчера"], ["7", "7 дней"], ["14", "14 дней"], ["30", "30 дней"], ["90", "90 дней"]];
 const categories = {all:"Все категории", runs:"Запуски", delivery:"Доставка", audit:"Действия"};
 const columns = [["at", "Время"], ["category", "Категория"], ["event", "Событие"], ["actor", "Участник"], ["status", "Результат"], ["object", "Объект"]];
 const calendarFormat = new Intl.DateTimeFormat("ru", {day:"numeric", month:"short", year:"numeric"});
 const clockFormat = new Intl.DateTimeFormat("ru", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"});
-
-function midnight(date, days = 0) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
-}
-
-function dayString(date) {
-  return [String(date.getFullYear()).padStart(4, "0"), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
-}
-
-function readDate(text) {
-  const [year, month, day] = text.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function presetRange(preset) {
-  const end = midnight(new Date(), preset === "yesterday" ? -1 : 0);
-  return {start:midnight(end, 1 - (Number(preset) || 1)), end};
-}
 
 function rangeLabel({start, end}) {
   return calendarFormat.formatRange(start, end);

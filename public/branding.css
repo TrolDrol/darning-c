@@ -6,3 +6,6 @@
   font:900 17px/1 system-ui,sans-serif; letter-spacing:-.09em;
 }
 .legal-page .masthead [data-theme-toggle] { margin-inline-start:auto; }
+:root[data-theme="vi"] .masthead .brand img { width:auto; max-width:clamp(90px,11vw,142px); height:36px; object-fit:contain; }
+.masthead [data-theme-toggle] img { width:26px; height:26px; object-fit:contain; }
+.masthead [data-theme-toggle]:focus-visible { outline:2px solid currentColor; outline-offset:3px; }

@@ -7,7 +7,7 @@ import json
 
 from psycopg.types.json import Jsonb
 
-from analyzers import REPOSITORY_RULE_ID, RULES, repository_paths_checked
+from analyzers import REPOSITORY_RULE_ID, REPORT_RULES as RULES, repository_paths_checked
 from workspace import WorkspaceError, now
 
 

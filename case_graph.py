@@ -7,10 +7,14 @@ from hashlib import sha256
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 import case_regex
+import case_custom
 
 
-NODE_TYPES = ("manual", "schedule", "source", "secrets", "sca", "sast", "condition", "explain", "verify", "notify", "regex")
-SCANNERS = {"secrets", "sca", "sast"}
+EVENT_TRIGGERS = ("github_pr", "github_push", "webhook")
+TRIGGERS = ("manual", "schedule", *EVENT_TRIGGERS)
+NODE_TYPES = (*TRIGGERS, "source", "secrets", "sca", "sast", "condition", "explain", "verify",
+              "notify", "regex", "custom", "json_keys", "ai_review")
+SCANNERS = {"secrets", "sca", "sast", "json_keys"}
 SEVERITIES = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 CATEGORIES = ("SECRET", "SCA", "SAST")
 
@@ -25,6 +29,8 @@ OUTPUT_SOCKETS = {
     "condition": {"true": "flow", "false": "flow"},
     "regex": {"count": "int", "matches": "strings", "found": "bool"},
 }
+INPUT_SOCKETS["custom"] = INPUT_SOCKETS["regex"]
+OUTPUT_SOCKETS["custom"] = OUTPUT_SOCKETS["regex"]
 
 
 class GraphError(ValueError):
@@ -166,9 +172,17 @@ def schedule_zone(name):
 def _parameters(kind, params):
     if not isinstance(params, dict):
         raise GraphError("Параметры блока должны быть объектом.")
-    if kind == "regex":
+    if kind == "ai_review":
+        if set(params) - {"connection","model"}:
+            raise GraphError("В блоке обзора допустимы имя подключения и ID модели.")
+        if "connection" in params and (not isinstance(params["connection"],str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}",params["connection"])):
+            raise GraphError("Выберите именованное подключение проекта.")
+        _parameters("explain", {"model":params["model"]} if "model" in params else {})
+        return dict(params)
+    if kind in ("regex", "custom"):
         try:
-            return case_regex.validate_parameters(params)
+            return case_regex.validate_parameters(params) if kind == "regex" else case_custom.parameters(params)
         except ValueError as error:
             raise GraphError(str(error)) from error
     if kind in SCANNERS:
@@ -201,10 +215,18 @@ def _parameters(kind, params):
             raise GraphError("Для этого источника доступен привязанный репозиторий.")
         return dict(params)
     if kind == "schedule":
-        if set(params) not in ({"time"}, {"time","timezone"}) or not isinstance(params["time"], str) or not re.fullmatch(
+        if set(params) - {"time", "timezone", "weekdays", "monthDay"} or not isinstance(params.get("time"), str) or not re.fullmatch(
             r"(?:[01]\d|2[0-3]):[0-5]\d", params["time"], re.ASCII
         ):
-            raise GraphError("Укажите ежедневное время в формате ЧЧ:ММ.")
+            raise GraphError("Укажите время в формате ЧЧ:ММ.")
+        if "weekdays" in params:
+            days = params["weekdays"]
+            if (not isinstance(days, list) or not 1 <= len(days) <= 7
+                    or any(type(day) is not int or not 1 <= day <= 7 for day in days)
+                    or len(set(days)) != len(days) or "monthDay" in params):
+                raise GraphError("Выберите один или несколько дней недели.")
+        if "monthDay" in params and (type(params["monthDay"]) is not int or not 1 <= params["monthDay"] <= 31):
+            raise GraphError("Выберите день месяца от 1 до 31.")
         if "timezone" in params:
             schedule_zone(params["timezone"])
         return dict(params)
@@ -276,7 +298,7 @@ def validate_graph(graph, *, draft=False):
         if any(type(n) not in (int, float) or not -100_000 <= n <= 100_000 for n in (x, y)):
             raise GraphError("Координаты узла за пределами рабочей области.")
         nodes[key] = {"id": key, "type": kind, "x": x, "y": y, "params": _parameters(kind, node.get("params", {}))}
-    triggers = [key for key, node in nodes.items() if node["type"] in ("manual", "schedule")]
+    triggers = [key for key, node in nodes.items() if node["type"] in TRIGGERS]
     sources = [key for key, node in nodes.items() if node["type"] == "source"]
     if len(triggers) > 1 or len(sources) > 1 or (not draft and (not triggers or not sources)):
         raise GraphError("Добавьте один триггер и один источник проекта.")
@@ -322,6 +344,8 @@ def validate_graph(graph, *, draft=False):
 
 
 def _identity(item):
+    if item.get("class") == "json-duplicate-key":
+        return ("json-duplicate-key", item["path"], item["line"], item["column"])
     if item["category"] == "SCA":
         keys = ("category", "path", "group", "artifact", "version", "advisoryId")
     else:
@@ -339,6 +363,8 @@ def _sample(item):
     line = item.get("line")
     if type(line) is int and line > 0:
         result["line"] = line
+        if type(item.get("column")) is int and item["column"] > 0:
+            result["column"] = item["column"]
     advisory = item.get("advisoryId")
     if isinstance(advisory, str) and re.fullmatch(r"(?:CVE-\d{4}-\d{4,}|GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})", advisory):
         result["advisoryId"] = advisory
@@ -441,7 +467,7 @@ def execute_graph(graph, run_node, on_stage, on_packet=None, on_input=None, on_p
         if not required[key].issubset(received):
             on_stage(stage | {"status": "skipped", "output": _summary([])})
             continue
-        if kind == "regex" and "values" not in inputs:
+        if kind in ("regex", "custom") and "values" not in inputs:
             inputs["values"] = params["values"]
         if on_input:
             on_input(node, findings)
@@ -459,13 +485,16 @@ def execute_graph(graph, run_node, on_stage, on_packet=None, on_input=None, on_p
                 else:
                     selected = _condition(params, findings)
                 port = "true" if selected else "false"
+            elif kind == "custom":
+                values = case_custom.evaluate(params["steps"], inputs["values"])
+                port = None
             elif kind == "regex":
                 try:
                     values = case_regex.match_values(params["pattern"], inputs["values"])
                 except ValueError as error:
                     raise GraphError(str(error)) from error
                 port = None
-            elif kind not in ("manual", "schedule"):
+            elif kind not in TRIGGERS:
                 result = run_node(kind, params, deepcopy(findings))
                 if kind == "source" and isinstance(result, list):
                     values = {"paths": result}

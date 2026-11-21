@@ -11,7 +11,8 @@ from workspace import WorkspaceError
 FORMAT = "darning.workflow"
 PAGE = 20
 _EXTENSION = re.compile(r"\\\.[a-z0-9]{1,12}\$")
-_PARAMETERS = {"schedule": ("time", "timezone"), "condition": ("field", "op", "value"), "regex": ("pattern",),
+_PARAMETERS = {"schedule": ("time", "timezone", "weekdays", "monthDay"), "condition": ("field", "op", "value"), "regex": ("pattern",),
+               "custom": ("name", "steps"),
                "sast": ("language",), "sca": ("manifest",), "explain": ("mode",), "notify": ("channel",)}
 
 
@@ -33,7 +34,7 @@ def portable_graph(graph):
         node["id"] = ids[node["id"]]
         kind = node["type"]
         params = node["params"] = {k: node["params"][k] for k in _PARAMETERS.get(kind, ()) if k in node["params"]}
-        if kind == "regex":
+        if kind in ("regex", "custom"):
             params["values"] = []
         # Free text in a path filter can contain private repository names or keys.
         # Preserve common extension filters and require re-selection of project paths.

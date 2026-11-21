@@ -278,7 +278,7 @@ class TelegramIntegration:
         annotated=[]
         for f in report.get("findings",[]):
             fp=fingerprint(f)
-            item=dict(f)
+            item=dict(f, discussionKey=fp)
             if fp in decisions:
                 item["decision"]={"status":"false_positive","actor":decisions[fp]}
             if fp in actions and actions[fp]["state"]!="open":
@@ -330,6 +330,9 @@ class TelegramIntegration:
         if index+1<count:
             navigation.append({"text":"Следующее ›","callback_data":"next:"+row["id"]})
         buttons=[line for line in (action_buttons,navigation,self.report_button(row["project_id"],row["run_id"])) if line]
+        report_link=self.report_button(row["project_id"],row["run_id"])
+        if report_link:
+            buttons.append([{"text":"Обсудить с ИИ в Штопке","url":report_link[0]["url"]+"?discuss="+fingerprint(f)}])
         return {"text":text[:3900],"reply_markup":{"inline_keyboard":buttons}}
 
     def notify(self, project, report, findings):

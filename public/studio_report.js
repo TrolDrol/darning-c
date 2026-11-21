@@ -1,4 +1,5 @@
 import {renderDependencies} from "/studio_dependencies.js";
+import {discussion} from "/studio_discussion.js";
 
 export function reportMarkup(run,e,labels) {
   const state={queued:"В очереди",running:"Выполняется",done:"Готово",completed:"Завершён",passed:"Пройден",review:"Есть замечания",failed:"Ошибка",skipped:"Пропущен",error:"Ошибка",pending:"Ожидает",partial:"Частичный результат"};
@@ -8,7 +9,7 @@ export function reportMarkup(run,e,labels) {
   const commitLink=/^[\w.-]+\/[\w.-]+$/.test(source?.repository || "") && /^[a-f0-9]{40}$/.test(revision);
   const revisionLabel=revision?`<code title="${e(revision)}">${e(revision.slice(0,12))}</code>`:"";
   const revisionMarkup=commitLink?`<a href="https://github.com/${e(source.repository)}/commit/${e(revision)}" target="_blank" rel="noopener noreferrer">${revisionLabel}</a>`:revisionLabel;
-  const place=f=>`${f.path}${f.line?` · ${f.line}${f.endLine&&f.endLine!==f.line?"–"+f.endLine:""}`:""}`;
+  const place=f=>`${f.path}${f.line?` · ${f.line}${f.column?":"+f.column:""}${f.endLine&&f.endLine!==f.line?"–"+f.endLine:""}`:""}`;
   const count=x=>x?.count===undefined?"—":`${x.count}${Object.keys(x.categories||{}).length?" · "+Object.entries(x.categories).map(([a,b])=>`${a} ${b}`).join(", "):""}`;
   function packet(stage, side){
     const data=stage[side], sample=data?.sample||[];
@@ -49,8 +50,10 @@ export function reportMarkup(run,e,labels) {
     ${run.error?`<p role="alert">${e(run.error)}</p>`:""}
     ${stageMap.size?`<div class="studio-stage-list"><table><caption>Передача данных между блоками</caption><thead><tr><th>Блок</th><th>Состояние</th><th>Вход</th><th>Выход</th></tr></thead><tbody>${Array.from(stageMap.values(),s=>`<tr><th scope="row">${e(labels[s.type]||s.type||s.id)} <small>${e(s.id)}</small></th><td>${e(state[s.status]||s.status)}</td><td>${packet(s,"input")}</td><td>${packet(s,"output")}${s.output?.port==="true"?" · ветка «Да»":s.output?.port==="false"?" · ветка «Нет»":""}</td></tr>`).join("")}</tbody></table></div>`:""}
     ${active?"":`<div class="studio-report-heading"><h3>Находки (${findings.length})</h3><button type="button" class="button" data-export="json">Скачать JSON</button><button type="button" class="button" data-export="txt">Скачать текст</button></div>
-      ${findings.length?`<ul class="studio-findings">${findings.map(f=>`<li><small>${e([f.category,f.severity].filter(Boolean).join(" · "))}</small><strong>${e(f.title||f.class||f.artifact)}</strong><code>${e(place(f))}</code>
+      ${findings.length?`<ul class="studio-findings">${findings.map((f,i)=>`<li><small>${e([f.category,f.severity].filter(Boolean).join(" · "))}</small><strong>${e(f.title||f.class||f.artifact)}</strong><code>${e(place(f))}</code><button type="button" class="link-button" data-discuss="${i}">Обсудить с ИИ</button>
       ${f.category==="SCA"?`<code>${e([f.group,f.artifact,f.version].join(":"))} · ${e(f.advisoryId)}</code>`:""}<p>${e(f.description||"")}</p><p>${e(f.remediation||f.fix||"")}</p>${decision(f)}</li>`).join("")}</ul>`:run.status==="failed"?"":"<p>Находок нет.</p>"}`}
+    ${Object.values(run.aiReviews || {}).map(r=>`<section><h3>Экспериментальный ИИ-обзор</h3><p>${e(r.model)} · проверено файлов: ${e(r.filesExamined)} · кандидатов: ${e(r.candidates)} · отклонено ответов: ${e(r.rejected)}</p>
+      <ul>${r.suggestions.map(s=>`<li><code>${e(place(s))}</code> · ${e(s.advice)}</li>`).join("")}</ul></section>`).join("")}
     ${run.dependencyMetrics?renderDependencies(run.dependencyMetrics,e):""}
     ${summary?.summary?`<section class="studio-summary"><h3>${e(origin[summary.source]||"Рекомендации")}</h3>${summary.model?`<small>${e(summary.model)}</small>`:""}<p>${e(summary.summary)}</p>
       ${summary.verification?.complete===false?'<p class="studio-mismatch">Список групп расходится с результатом анализаторов.</p>':""}
@@ -59,10 +62,14 @@ export function reportMarkup(run,e,labels) {
     ${run.delivery?`<p><strong>Оповещение</strong> · ${e(({sent:run.delivery.channel==="telegram"?"Принято Telegram":"Принято SMTP",failed:"Ошибка доставки",unknown:"Статус неизвестен",temporary:"Временный сбой",skipped:"Пропущено"})[run.delivery.status]||run.delivery.status)}. ${e(run.delivery.message||"")}</p>`:""}`;
 }
 
-export function bindReportActions(host, project, currentRun, announce) {
+export function bindReportActions(host, project, currentRun, announce, request) {
   host.addEventListener("click", async event => {
     const button=event.target.closest("button"), run=currentRun();
     if(!button||!run)return;
+    if(button.hasAttribute("data-discuss")){
+      discussion(host.closest(".studio") || host, project, run, Number(button.dataset.discuss), request);
+      return;
+    }
     if(button.hasAttribute("data-export")){
       exportReport(run,button.dataset.export);
       return;

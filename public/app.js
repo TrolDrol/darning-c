@@ -88,7 +88,8 @@ const journal = createJournal({page, request, getProjectId: () => projectId || "
 const menu = document.querySelector("#menu-toggle");
 const guide = createPageGuide(page, document.querySelector("#page-help"));
 const accountTools = document.querySelector(".account-tools");
-const accountEditor = createAccountEditor({request, getViewer: () => viewer, onSave: updated => {
+const accountEditor = createAccountEditor({request, getViewer: () => viewer,
+  getProject: () => projects.find(project => project.id === projectId), onSave: updated => {
   viewer = updated;
   accountEditor.refresh();
   announce("Профиль сохранён.");
@@ -466,7 +467,7 @@ async function showAuth(view, token) {
     page.innerHTML = authHeading("Вход в «Штопку»", reportLink
       ? "Войдите под учётной записью участника проекта. После входа откроется проверка по ссылке."
       : "Войдите, чтобы открыть проекты своего предприятия.",
-      authForm("login", loginFields, "Войти", back) + (inviteLink ? "" :
+      authForm("login", loginFields, "Войти", back) + '<p class="auth-switch"><a href="/recover">Забыли пароль?</a></p>' + (inviteLink ? "" :
         '<p class="auth-switch">Нет аккаунта? <a href="#register">Зарегистрироваться</a></p>'));
     page.setAttribute("aria-busy", "false");
     return;

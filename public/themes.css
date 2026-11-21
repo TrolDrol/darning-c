@@ -129,7 +129,7 @@ main:has(#page > .portal), main:has(.studio), main.garden-home:has(.project-scre
 }
 .automation-canvas .studio-node:is([data-kind=source],[data-kind=verify],[data-kind=notify]) { --node-color:var(--success); }
 .automation-canvas .studio-node:is([data-kind=secrets],[data-kind=sast]) { --node-color:var(--high); }
-.automation-canvas .studio-node:is([data-kind=schedule],[data-kind=condition]) { --node-color:var(--gold); }
+.automation-canvas .studio-node:is([data-kind=schedule],[data-kind=condition],[data-kind=github_pr],[data-kind=github_push],[data-kind=webhook]) { --node-color:var(--gold); }
 .automation-canvas .studio-node:is(.selected,:focus-within) { box-shadow:0 0 0 3px var(--background),0 0 0 5px var(--link); }
 .canvas-overview-scale .studio-node:is(:hover,:focus-within) .canvas-node-caption,
 .automation-canvas .canvas-next { background:var(--surface); color:var(--charcoal); }
