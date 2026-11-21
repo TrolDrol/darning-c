@@ -1,0 +1,11 @@
+.env
+.env.*
+.secrets/
+.darning/
+*.pem
+*.key
+.data/
+__pycache__/
+*.py[cod]
+.venv/
+backups/

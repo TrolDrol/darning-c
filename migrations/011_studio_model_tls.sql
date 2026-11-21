@@ -1,0 +1,1 @@
+ALTER TABLE studio_model ADD COLUMN IF NOT EXISTS fingerprint TEXT NOT NULL DEFAULT '';

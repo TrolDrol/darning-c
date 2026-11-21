@@ -1,0 +1,9 @@
+**
+!case_data/
+!case_data/*.json
+!requirements.txt
+!*.py
+!migrations/
+!migrations/*.sql
+!public/
+!public/**

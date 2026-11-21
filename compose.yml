@@ -1,0 +1,262 @@
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-runtime-env: &runtime-env
+  BANK_PRODUCTION: "1"
+  BANK_DATABASE_URL: postgresql://bank@postgres:5432/bank
+  BANK_DATABASE_PASSWORD_FILE: /run/darning/db/password
+  BANK_REDIS_URL: redis://redis:6379/0
+  BANK_PUBLIC_URL: ${BANK_PUBLIC_URL:-http://localhost:${DARNING_PORT:-8103}}
+
+x-smtp: &smtp
+  BANK_SMTP_HOST: ${BANK_SMTP_HOST:-}
+  BANK_SMTP_PORT: ${BANK_SMTP_PORT:-}
+  BANK_SMTP_FROM: ${BANK_SMTP_FROM:-}
+  BANK_SMTP_TO: ${BANK_SMTP_TO:-}
+  BANK_SMTP_SECURITY: ${BANK_SMTP_SECURITY:-}
+
+x-github: &github
+  BANK_GITHUB_APP_ID: ${BANK_GITHUB_APP_ID:-}
+  BANK_GITHUB_APP_SLUG: ${BANK_GITHUB_APP_SLUG:-}
+  BANK_GITHUB_INSTALLATION_ID: ${BANK_GITHUB_INSTALLATION_ID:-}
+  BANK_GITHUB_REPOSITORY_ID: ${BANK_GITHUB_REPOSITORY_ID:-}
+  BANK_GITHUB_REPOSITORY: ${BANK_GITHUB_REPOSITORY:-}
+  BANK_GITHUB_PYTHON_PATH: ${BANK_GITHUB_PYTHON_PATH:-service.py}
+  BANK_GITHUB_CONFIG_PATH: ${BANK_GITHUB_CONFIG_PATH:-settings.json}
+
+x-ai: &ai
+  BANK_AI_URL: ${BANK_AI_URL:-}
+  BANK_AI_MODEL: ${BANK_AI_MODEL:-}
+  BANK_AI_TIMEOUT: ${BANK_AI_TIMEOUT:-90}
+  BANK_AI_TRUSTED_ORIGINS: ${BANK_AI_TRUSTED_ORIGINS:-}
+
+x-runtime: &runtime
+  image: ${BANK_APP_IMAGE:-darning:local}
+  build: .
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:size=32m,mode=1777,noexec,nosuid,nodev
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 160
+  mem_limit: 384m
+  cpus: 2
+  stop_grace_period: 45s
+  logging: *logging
+  volumes:
+    - db_auth:/run/darning/db:ro
+  networks: [backend]
+
+x-ready: &ready
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_started
+  migrate:
+    condition: service_completed_successfully
+
+x-worker-health: &worker-health
+  test: ["CMD", "python", "-c", "import os,time; assert time.time() - os.stat('/tmp/bank-worker-heartbeat').st_mtime < 210"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
+services:
+  init:
+    image: python:3.11-slim
+    command: ["python", "-B", "/init.py"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./ops/init.py:/init.py:ro
+      - db_auth:/run/darning/db
+      - postgres_auth:/run/darning/postgres
+      - admin_auth:/run/darning/admin
+      - studio_key:/run/darning/key
+
+  postgres:
+    image: postgres:17.12-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: bank
+      POSTGRES_PASSWORD_FILE: /run/darning/postgres/password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - db_auth:/run/darning/db:ro
+      - postgres_auth:/run/darning/postgres:ro
+      - pg_data:/var/lib/postgresql/data
+      - ./ops/postgres-init.sh:/docker-entrypoint-initdb.d/10-bank-role.sh:ro
+    networks: [backend]
+    shm_size: 128m
+    mem_limit: 512m
+    pids_limit: 200
+    stop_grace_period: 60s
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "bank", "-d", "bank"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:8.10.3-alpine
+    user: redis
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--protected-mode", "no", "--maxmemory", "64mb"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /data:size=8m,mode=1777,noexec,nosuid,nodev
+    networks: [backend]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 40
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  migrate:
+    <<: *runtime
+    command: ["python", "-B", "production_worker.py", "migrate"]
+    restart: "no"
+    environment: *runtime-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *runtime
+    command: ["python", "-B", "server.py"]
+    environment:
+      <<: [*runtime-env, *smtp, *github, *ai]
+      BANK_AI_KEY_FILE: /run/bank-integrations/ai_key
+      BANK_ADMIN_USER: ${BANK_ADMIN_USER:-admin}
+      BANK_ADMIN_PASSWORD_FILE: /run/darning/admin/password
+      BANK_READER_USER: ${BANK_READER_USER:-}
+      BANK_READER_PASSWORD_FILE: /run/bank-integrations/reader_password
+      BANK_GITHUB_WEBHOOK_SECRET_FILE: /run/bank-integrations/github_webhook_secret
+      BANK_GITHUB_READER: studio
+      BANK_STUDIO_KEY_FILE: /run/darning/key/master
+      BANK_TELEGRAM_BOT_USERNAME: ${BANK_TELEGRAM_BOT_USERNAME:-}
+      BANK_TELEGRAM_BOT_TOKEN_FILE: /run/bank-integrations/telegram_bot_token
+      BANK_TELEGRAM_RELAY: ${BANK_TELEGRAM_RELAY:-}
+      BANK_TELEGRAM_WEBHOOK_SECRET_FILE: /run/bank-integrations/telegram_webhook_secret
+    volumes:
+      - db_auth:/run/darning/db:ro
+      - studio_key:/run/darning/key:ro
+      - admin_auth:/run/darning/admin:ro
+      - ${BANK_SECRETS_DIR:-./.secrets}/api:/run/bank-integrations:ro
+      - ${BANK_SECRETS_DIR:-./.secrets}/model-routes:/run/darning-model-routes:ro
+    ports:
+      - "127.0.0.1:${DARNING_PORT:-8103}:8103"
+    networks: [backend, worker_egress]
+    depends_on: *ready
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8103/api/ready', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  scan:
+    <<: *runtime
+    command: ["python", "-B", "production_worker.py", "scan"]
+    environment:
+      <<: [*runtime-env, *smtp, *github, *ai]
+      BANK_AI_KEY_FILE: /run/bank-integrations/ai_key
+      BANK_GITHUB_PRIVATE_KEY_FILE: /run/bank-integrations/github_private_key
+      BANK_REPORT_RETENTION_DAYS: ${BANK_REPORT_RETENTION_DAYS:-30}
+      BANK_JOB_RETENTION_HOURS: ${BANK_JOB_RETENTION_HOURS:-24}
+    volumes:
+      - db_auth:/run/darning/db:ro
+      - ${BANK_SECRETS_DIR:-./.secrets}/scan:/run/bank-integrations:ro
+    networks: [backend, worker_egress]
+    depends_on: *ready
+    healthcheck: *worker-health
+
+  delivery:
+    <<: *runtime
+    command: ["python", "-B", "production_worker.py", "delivery"]
+    environment:
+      <<: [*runtime-env, *smtp, *github]
+      BANK_SMTP_USER: ${BANK_SMTP_USER:-}
+      BANK_SMTP_PASSWORD_FILE: /run/bank-integrations/smtp_password
+      BANK_GITHUB_PRIVATE_KEY_FILE: /run/bank-integrations/github_private_key
+    volumes:
+      - db_auth:/run/darning/db:ro
+      - ${BANK_SECRETS_DIR:-./.secrets}/delivery:/run/bank-integrations:ro
+    networks: [backend, worker_egress]
+    depends_on: *ready
+    healthcheck: *worker-health
+
+  studio:
+    <<: *runtime
+    command: ["python", "-B", "case_runtime.py"]
+    environment:
+      <<: [*runtime-env, *smtp, *ai, *github]
+      BANK_ADMIN_USER: ${BANK_ADMIN_USER:-admin}
+      BANK_READER_USER: ${BANK_READER_USER:-}
+      BANK_STUDIO_KEY_FILE: /run/darning/key/master
+      BANK_GITHUB_PRIVATE_KEY_FILE: /run/studio-ai/github_private_key
+      BANK_GITHUB_READER: serve
+      BANK_TELEGRAM_BOT_USERNAME: ${BANK_TELEGRAM_BOT_USERNAME:-}
+      BANK_TELEGRAM_BOT_TOKEN_FILE: /run/studio-ai/telegram_bot_token
+      BANK_TELEGRAM_RELAY: ${BANK_TELEGRAM_RELAY:-}
+      BANK_METRICS_GITHUB_TOKEN_FILE: /run/studio-ai/metrics_github_token
+      BANK_METRICS_TRAFFIC_REPOS: ${BANK_METRICS_TRAFFIC_REPOS:-}
+      BANK_METRICS_TRAFFIC_PROJECTS: ${BANK_METRICS_TRAFFIC_PROJECTS:-}
+      BANK_SMTP_USER: ${BANK_SMTP_USER:-}
+      BANK_SMTP_PASSWORD_FILE: /run/studio-delivery/smtp_password
+      BANK_AI_KEY_FILE: /run/studio-ai/ai_key
+      BANK_STUDIO_SMTP_PROJECTS: ${BANK_STUDIO_SMTP_PROJECTS:-default}
+      BANK_REPORT_RETENTION_DAYS: ${BANK_REPORT_RETENTION_DAYS:-30}
+    volumes:
+      - db_auth:/run/darning/db:ro
+      - studio_key:/run/darning/key:ro
+      - ${BANK_SECRETS_DIR:-./.secrets}/studio:/run/studio-ai:ro
+      - ${BANK_SECRETS_DIR:-./.secrets}/studio-mail:/run/studio-delivery:ro
+      - ${BANK_SECRETS_DIR:-./.secrets}/model-routes:/run/darning-model-routes:ro
+    networks: [backend, worker_egress]
+    depends_on: *ready
+
+  news:
+    <<: *runtime
+    command: ["python", "-B", "case_news.py", "--watch"]
+    environment:
+      BANK_DATABASE_URL: postgresql://bank@postgres:5432/bank
+      BANK_DATABASE_PASSWORD_FILE: /run/darning/db/password
+    networks: [backend, worker_egress]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 96m
+    cpus: 0.25
+
+networks:
+  backend:
+    internal: true
+  worker_egress:
+
+volumes:
+  pg_data:
+  db_auth:
+  postgres_auth:
+  admin_auth:
+  studio_key:

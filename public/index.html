@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Штопка проверяет код, настройки и зависимости, объясняет найденные проблемы и предлагает исправления.">
+  <title>Штопка · Проверка безопасности кода</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="/darning-icon.png">
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/portal.css">
+  <link rel="stylesheet" href="/studio.css">
+  <link rel="stylesheet" href="/studio_canvas.css">
+  <link rel="stylesheet" href="/journal.css">
+  <link rel="stylesheet" href="/workspace_ui.css">
+  <link rel="stylesheet" href="/project_nav.css">
+  <link rel="stylesheet" href="/account.css">
+  <script type="module" src="/app.js"></script>
+  <link rel="stylesheet" href="/themes.css">
+  <link rel="stylesheet" href="/branding.css">
+  <link rel="stylesheet" href="/buttons.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Перейти к содержимому</a>
+  <header class="masthead">
+    <a href="#projects" class="brand" aria-label="Штопка, на главную"><img src="/darning-logo.png" alt="Штопка" width="142" height="32"></a>
+    <button id="menu-toggle" class="button" type="button" aria-controls="navigation" aria-expanded="false" hidden>Меню</button>
+    <nav id="navigation" aria-label="Рабочее пространство" hidden>
+      <a href="#scenarios" data-view="scenarios" data-project-view class="nav-item">Сценарии</a>
+      <a href="#projects" data-view="projects" data-portal-view class="nav-item">Проекты</a>
+      <a href="#news" data-view="news" data-portal-view class="nav-item">Новости</a>
+    </nav>
+    <div id="workspace-controls" class="workspace-controls" hidden>
+      <details class="account-tools"><summary id="account-menu-toggle" aria-label="Меню пользователя" title="Меню пользователя">
+        <svg data-avatar-default viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M4 21v-2c0-3.5 3.7-6 8-6s8 2.5 8 6v2"/></svg>
+        <img data-account-avatar hidden alt=""></summary>
+        <div><strong id="account-display-name"></strong><span id="reader-mode" class="reader-mode" hidden>Только просмотр</span>
+        <button type="button" id="edit-account">Редактировать</button>
+        <button type="button" id="share-project">Поделиться проектом</button>
+        <a href="/legal">Документы сервиса</a><button type="button" id="sign-out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3H4v18h6m4-14 5 5-5 5m-6-5h11"/></svg>Выйти</button></div>
+      </details>
+    </div>
+    <button type="button" data-theme-toggle aria-label="Сменить тему"></button>
+    <button type="button" id="page-help" aria-label="Показать подсказки страницы" title="Показать подсказки страницы" hidden>?</button>
+  </header>
+  <main id="main" class="garden-home" tabindex="-1">
+    <div id="page" class="page" aria-busy="true"><p class="empty">Загрузка рабочего пространства…</p></div>
+  </main>
+  <footer class="site-footer"><a href="/legal">Документы сервиса</a></footer>
+  <dialog id="run-dialog" aria-labelledby="dialog-title"></dialog>
+  <dialog id="profile-dialog" aria-labelledby="profile-title">
+    <form class="dialog-body" id="profile-form"><h2 id="profile-title">Редактировать профиль</h2>
+      <label class="field">Имя<input name="displayName" required maxlength="100" autocomplete="name"></label>
+      <div class="account-avatar-field"><img data-avatar-preview alt="Выбранная аватарка" hidden>
+        <label class="field">Аватарка<input type="file" name="avatarFile" accept="image/png,image/jpeg,image/webp"></label>
+      </div>
+      <button class="link-button" type="button" data-remove-avatar hidden>Удалить аватарку</button>
+      <p role="alert" class="run-error"></p><div class="page-actions">
+        <button type="button" class="button" data-profile-cancel>Отмена</button><button type="submit" class="button primary">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

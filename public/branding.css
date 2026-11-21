@@ -1,0 +1,8 @@
+.masthead .brand img { display:block; width:clamp(90px,11vw,142px); height:auto; }
+.masthead [data-theme-toggle] { display:grid; place-items:center; background:var(--surface); color:var(--forest); border:1px solid var(--line-strong); border-radius:9px; font:20px/1 system-ui; width:32px; height:32px; cursor:pointer; padding:0; flex:none; }
+:root[data-theme="vi"] .masthead [data-theme-toggle] {
+  background:var(--sunset);
+  color:#311833; border:1px solid #ffa7de;
+  font:900 17px/1 system-ui,sans-serif; letter-spacing:-.09em;
+}
+.legal-page .masthead [data-theme-toggle] { margin-inline-start:auto; }

@@ -1,0 +1,69 @@
+:root {
+  --btn-fill: #27313c;
+  --btn-hover: #354352;
+  --btn-accent: linear-gradient(165deg, #79acff 4%, #8acdf6 57%, #96e5be 100%);
+  --btn-ink: #101c2b;
+}
+:root[data-theme="light"] {
+  --btn-fill: #deedf8;
+  --btn-hover: #cbdfee;
+  --btn-accent: linear-gradient(165deg, #ff8b64 4%, #ffb362 65%, #ffcf68 100%);
+  --btn-ink: #351b12;
+}
+:root[data-theme="vi"] {
+  --btn-fill: #302e31;
+  --btn-hover: #403b41;
+  --btn-accent: linear-gradient(165deg, #f767ee 8%, #ff8fda 50%, #ffb7ae 78%, #ffe79c 100%);
+  --btn-ink: #231623;
+}
+
+/* Page and dialog actions, including links which perform downloads. */
+a.button:not([hidden]) { display:inline-flex; align-items:center; justify-content:center; }
+.auth-card .page-actions > .button.primary { flex:1 1 auto; }
+:root :is(.button:not(.text), .automation-run, .automation-history, .automation-top-tools button, .journal-calendar > summary) {
+  min-height:46px;
+  padding:10px 20px;
+  border:0;
+  border-radius:14px;
+  background:var(--btn-fill);
+  color:var(--charcoal);
+  box-shadow:none;
+  font:650 15px/1.25 "Segoe UI",system-ui,sans-serif;
+  text-decoration:none;
+  transition:background-color .14s ease, filter .14s ease;
+}
+:root :is(.button:not(.text), .automation-history, .automation-top-tools button, .journal-calendar > summary):hover {
+  background:var(--btn-hover);
+}
+:root :is(.button.primary,.automation-bottom-tools .automation-run),
+:root :is(.button.primary,.automation-bottom-tools .automation-run):hover {
+  background:var(--btn-accent);
+  color:var(--btn-ink);
+  font-weight:700;
+}
+:root :is(.button.primary,.automation-run):hover:not(:disabled) { filter:brightness(1.06); }
+:root :is(.button,.automation-run,.automation-history):active:not(:disabled) { filter:brightness(.91); }
+:root :is(.button,.automation-run,.automation-history, .automation-top-tools button):disabled {
+  background:var(--btn-fill); color:var(--muted); opacity:.55; filter:none;
+}
+:root :is(button,summary,.button,.link-button):focus-visible { outline:3px solid var(--link); outline-offset:2px; }
+.portal-table .button:not(.text), .masthead #menu-toggle, .automation-header .button:not(.text),
+.automation-top-tools button:not(.primary) { min-height:34px; padding:6px 12px; border-radius:10px; font-size:14px; }
+.portal-table button.link-button, .guide-actions [data-next] {
+  min-height:32px; padding:5px 11px; border-radius:9px; border:0;
+  background:var(--btn-fill); color:var(--charcoal); font-weight:650; text-decoration:none;
+}
+.portal-table button.link-button:hover, .guide-actions [data-next]:hover { background:var(--btn-hover); }
+.journal-periods button[aria-pressed=true] { border-radius:9px; box-shadow:none; }
+.masthead :is(#page-help,[data-theme-toggle]):not([hidden]) { background:var(--btn-fill); border:0; border-radius:10px; }
+.masthead :is(#page-help,[data-theme-toggle]):hover { background:var(--btn-hover); }
+:root[data-theme="vi"] .masthead [data-theme-toggle] { background:var(--btn-accent); color:var(--btn-ink); }
+@media(max-width:650px) {
+  :root :is(.button:not(.text),.automation-run,.automation-history,.journal-calendar > summary) {
+    min-height:40px; padding:8px 13px; font-size:14px; border-radius:12px;
+  }
+  .masthead #menu-toggle { min-height:32px; padding:4px 8px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  :root :is(.button,.automation-run,.automation-history,.automation-top-tools button,.journal-calendar > summary) { transition:none; }
+}

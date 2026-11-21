@@ -1,0 +1,195 @@
+.studio-scroller.automation-canvas {
+  --canvas-base: #242a29;
+  --canvas-dot: #46504b;
+  --canvas-ink: #f1f5ed;
+  --canvas-muted: #bdc7c2;
+  --canvas-active: #94e7ac;
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  max-height: none;
+  overflow: clip;
+  isolation: isolate;
+  touch-action: none;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle, var(--canvas-dot) 1.1px, transparent 1.45px) 0 0 / 24px 24px var(--canvas-base);
+  cursor: grab;
+}
+.automation-canvas.panning, .automation-canvas.panning * { cursor: grabbing !important; }
+.automation-canvas:focus-visible { outline: 2px solid var(--canvas-active); outline-offset: -3px; }
+.automation-canvas .studio-sheet, .automation-canvas .studio-plane { position: absolute; inset: 0; }
+.automation-canvas .studio-plane { transform-origin: 0 0; overflow: visible; }
+.automation-canvas .studio-plane > .canvas-wires {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  inset: 0 auto auto 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.automation-canvas .studio-edge { cursor: pointer; }
+.automation-canvas .studio-edge .studio-hit { fill: none; stroke: transparent; pointer-events: stroke; stroke-width: 17; }
+.automation-canvas .studio-edge .studio-wire { fill: none; pointer-events: stroke; stroke: #9daaa5; stroke-width: 1.8; }
+.automation-canvas .studio-wire.otherwise { stroke-dasharray: 5 4; }
+.automation-canvas .studio-edge.taken .studio-wire { stroke: #7be1a7; stroke-width: 2.7; filter: drop-shadow(0 0 3px #67e59b50); }
+.automation-canvas .studio-edge:is(.selected-edge,:hover,:focus-visible) .studio-wire { stroke: #e0f5e4; stroke-width: 3.3; }
+.automation-canvas .studio-edge.taken:is(:hover,:focus-visible,.selected-edge) .studio-wire { stroke: #a5f3bd; }
+.automation-canvas .canvas-preview { stroke: #9cdeba; stroke-width: 2; stroke-dasharray: 4 4; pointer-events: none; }
+.automation-canvas .studio-node {
+  --node-color: #344d40;
+  position: absolute;
+  width: 72px;
+  height: 72px;
+  border-radius: 15px;
+  border: 1.7px solid #b9c1b9;
+  background: #f3f6ee;
+  box-sizing: border-box;
+  color: var(--node-color);
+  box-shadow: 0 3px 8px #11171333;
+  z-index: 1;
+}
+.automation-canvas .studio-node[data-kind=manual], .automation-canvas .studio-node[data-kind=schedule] { --node-color: #80651c; background: #fbf1cf; }
+.automation-canvas .studio-node[data-kind=source] { --node-color: #316d56; background: #e2eddc; }
+.automation-canvas .studio-node[data-kind=secrets], .automation-canvas .studio-node[data-kind=sast], .automation-canvas .studio-node[data-kind=sca] { --node-color: #3d627d; background: #e4eef2; }
+.automation-canvas .studio-node[data-kind=explain], .automation-canvas .studio-node[data-kind=verify] { --node-color: #66587e; background: #ede8f2; }
+.automation-canvas .studio-node[data-kind=condition] { --node-color: #8a5b38; background: #f5e7d5; }
+.automation-canvas .studio-node[data-kind=notify] { --node-color: #346c64; background: #dcefe9; }
+.automation-canvas .studio-node:is(.selected,:focus-within) { border-color: #a8dab5; box-shadow: 0 0 0 2px #29342e, 0 0 0 3.5px #9cd2aa; }
+.automation-canvas .studio-node:hover { z-index: 2; }
+.automation-canvas .studio-node-body {
+  display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border: 0; border-radius: inherit;
+  background: transparent; font: inherit; color: inherit; cursor: grab; touch-action: none; user-select: none;
+}
+.automation-canvas .studio-node-body:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+.canvas-node-icon { display: grid; place-items: center; width: 35px; height: 35px; }
+.canvas-node-icon svg, .studio-inspector-title .studio-glyph svg { width: 100%; height: 100%; }
+.studio-inspector-title .studio-glyph svg { padding: 4px; box-sizing: border-box; }
+.automation-canvas .canvas-node-caption {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 166px;
+  color: var(--canvas-ink);
+  text-align: center;
+  pointer-events: auto;
+}
+.automation-canvas .studio-node-body strong { display: block; font-size: 15px; font-weight: 640; line-height: 1.22; color: var(--canvas-ink); }
+.automation-canvas .studio-node-body small { display: block; margin-top: 3px; font-size: 12px; font-weight: 450; line-height: 1.2; color: var(--canvas-muted); }
+.canvas-overview-scale .studio-node:is(:hover,:focus-within) { z-index: 3; }
+.canvas-overview-scale .studio-node:is(:hover,:focus-within) .canvas-node-caption {
+  width: max-content;
+  max-width: 182px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: #1c2421;
+  transform: translateX(-50%) scale(var(--caption-zoom));
+  transform-origin: top center;
+}
+.automation-canvas .canvas-outlet { position: absolute; right: -1.5px; top: 36px; height: 0; }
+.automation-canvas .canvas-inlet { position:absolute; left:0; height:0; }
+.automation-canvas .studio-node.socket-card { border-radius:12px; }
+.automation-canvas .socket-card .studio-node-body {
+  display:flex; align-items:flex-start; justify-content:flex-start; gap:7px; padding:9px 10px;
+}
+.automation-canvas .socket-card .canvas-node-icon { width:22px; height:22px; flex:none; }
+.automation-canvas .socket-card .canvas-node-caption,
+.canvas-overview-scale .studio-node.socket-card:is(:hover,:focus-within) .canvas-node-caption {
+  position:static; width:auto; max-width:none; padding:0; text-align:left; transform:none; background:transparent;
+}
+.automation-canvas .socket-card .studio-node-body strong { font-size:13px; line-height:22px; }
+.automation-canvas .socket-card .studio-node-body small { display:none; }
+.automation-canvas .socket-card .studio-node-body::after {
+  content:""; position:absolute; top:36px; left:0; right:0; border-top:1px solid currentColor; opacity:.24;
+}
+.automation-canvas .canvas-slot-caption {
+  position:absolute; transform:translateY(-50%); white-space:nowrap; pointer-events:none;
+  font-size:11px; font-weight:600; line-height:1; color:var(--node-color);
+}
+.automation-canvas .canvas-inlet .canvas-slot-caption { left:10px; }
+.automation-canvas .canvas-outlet .canvas-slot-caption { right:10px; }
+.automation-canvas [data-socket-type=int] { --socket-color:var(--gold,#bd872c); }
+.automation-canvas [data-socket-type=strings] { --socket-color:var(--link,#588ccc); }
+.automation-canvas [data-socket-type=bool] { --socket-color:var(--success,#6ba287); }
+.automation-canvas [data-socket-type]:not([data-socket-type=flow]) .canvas-port::after {
+  background:var(--socket-color); border-color:var(--socket-color); border-radius:50%; width:10px; height:10px;
+}
+.automation-canvas.wiring .canvas-port.canvas-target::after {
+  outline:2px solid var(--canvas-active); outline-offset:2px;
+}
+.studio-string-list { display:grid; gap:.45rem; min-width:0; margin:0; padding:.55rem .65rem; border:1px solid var(--line); border-radius:8px; }
+.studio-string-list legend { padding:0 .2rem; font-weight:600; }
+.studio-string-row { display:flex; align-items:center; gap:.25rem; }
+.studio-string-row input { min-width:0; width:100%; font-family:monospace; }
+.automation-canvas .canvas-outlet[data-port=true] { top: 20px; }
+.automation-canvas .canvas-outlet[data-port=false] { top: 52px; }
+.automation-canvas .canvas-port {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  color: var(--canvas-ink);
+  border: 0;
+  border-radius: 5px;
+}
+.automation-canvas button.canvas-port { cursor: crosshair; }
+.automation-canvas .canvas-port.output { left: -11px; top: -11px; }
+.automation-canvas .canvas-port.input { left: -12px; top: calc(50% - 11px); }
+.automation-canvas .canvas-port::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  background: #e2e8e0;
+  border: 1.5px solid #5e6e62;
+  border-radius: 50%;
+}
+.automation-canvas .canvas-port.input::after { border-radius: 2px; width: 7px; height: 12px; }
+.automation-canvas .canvas-port:is(:hover,:focus-visible,.canvas-origin)::after,
+.automation-canvas.wiring .canvas-port.canvas-target::after { background: #b4f5b9; box-shadow: 0 0 0 3px #77be8f55; }
+.automation-canvas .canvas-port-label {
+  position: absolute;
+  left: 8px;
+  bottom: 4px;
+  font: 600 10px/1.1 var(--body-font, sans-serif);
+  color: var(--canvas-muted);
+  pointer-events: none;
+}
+.automation-canvas .canvas-next {
+  position: absolute;
+  left: 18px;
+  top: -10px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-content: center;
+  border: 1px solid #7f9186;
+  border-radius: 5px;
+  background: #303c35;
+  color: #e4f1e4;
+  font: 500 16px/1 sans-serif;
+  cursor: pointer;
+}
+.automation-canvas .canvas-next::before { content: ""; position: absolute; top: 50%; right: 100%; width: 12px; height: 1px; background: #8e9d92; }
+.automation-canvas .canvas-outlet.has-edge .canvas-next { opacity: 0; pointer-events: none; }
+.automation-canvas .studio-node:is(.selected,:hover,:focus-within) .canvas-outlet.has-edge .canvas-next { opacity: 1; pointer-events: auto; }
+.automation-canvas .canvas-next:hover, .automation-canvas .canvas-next:focus-visible { background: #d0eccf; color: #21452d; }
+.automation-canvas.wiring .canvas-next { visibility: hidden; }
+.automation-canvas .studio-live { white-space: nowrap; left: 50%; transform: translateX(-50%); z-index: 1; top: -13px; }
+.automation-canvas [data-inspect-edge]:focus-visible { outline: none; }
+.studio-inspector .node-result { display: grid; gap: .35rem; padding: .7rem .8rem; border: 1px solid #c6d8cd; border-radius: 10px; background: #f3f8f4; }
+.node-result :is(h3,h4,p,ul) { margin: 0; }
+.node-result h4 { margin-top: .45rem; color: #21553b; }
+.node-result p,.node-result li { overflow-wrap: anywhere; font-size: .9rem; }
+.node-result ul { padding-inline-start: 1.1rem; }
+.node-result summary { cursor: pointer; color: #245739; }
+.node-result pre { max-height: 15rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: .5rem; background: white; font-size: .78rem; }
+@media (prefers-reduced-motion: reduce) {
+  .automation-canvas *, .automation-canvas *::before, .automation-canvas *::after { animation: none; transition: none; }
+}
