@@ -8,8 +8,10 @@ import socket
 import ssl
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
+from time import monotonic, sleep
 import case_model
 from workspace import WorkspaceError
+from case_unified import REVIEW_RULES
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -40,6 +42,8 @@ _REFERENCE = re.compile(
     r"|(?:line|строк[а-я]*)\s*[:№#]?\s*\d|https?:|[A-Za-z]:\\|\x00)", re.I,
 )
 _CATALOG = {
+    "QUALITY": ("Найдена конструкция, усложняющая сопровождение кода.", "Проверьте назначение конструкции и тесты изменённого метода."),
+    "PERF": ("Найдена конструкция для проверки производительности.", "Измерьте время и выделение памяти на представительных данных до и после изменения."),
     "actuator-unmasked-values": ("Actuator может вывести значения настроек без маскирования.", "Ограничьте просмотр диагностических значений. Проверьте маскирование под обычной учётной записью."),
     "repository-sensitive-path": ("Имя файла характерно для локальных секретов или закрытых ключей.",
                                  "Проверьте назначение файла у себя. Если в нём есть действующий секрет, замените его и удалите файл из репозитория."),
@@ -52,10 +56,16 @@ _CATALOG = {
     "route-authorization": ("Доступ к маршруту недостаточно ограничен", "Потребуйте соответствующее право для защищённого маршрута и добавьте тесты на разрешённый и запрещённый доступ."),
     "object-authorization": ("Доступ к объекту требует проверки прав", "Проверяйте право текущего пользователя на конкретный объект и добавьте тест с пользователем без доступа."),
 }
-_SCANNERS = ("secrets", "sca", "sast")
+_CATALOG.update({key: (rule["risk"], rule["fix"]) for key, rule in REVIEW_RULES.items()})
+_SCANNERS = ("secrets", "sca", "sast", "github_actions", "dockerfile", "java_review", "dependency_review", "spring_review", "package_review")
+_PR_TRIGGER = re.compile(r"^\s*(?:при|на|on)\s+(?:pull[ -]request|PR)\b", re.I)
+_NAMED_SCANNERS = {
+    "spring_review": re.compile(r"\bбезопасност\w*\s+Spring\s+и\s+JVM\b", re.I),
+    "dependency_review": re.compile(r"\bнов\w*\s+уязвим\w*\s+зависимост\w*\b", re.I),
+}
 
 
-def _request(instruction, data, token_limit, schema=None):
+def _request(instruction, data, token_limit, schema=None, *, retry_transient=False):
     profile = case_model.active()
     endpoint, model = profile.endpoint, profile.model
     if not model or not endpoint:
@@ -68,34 +78,45 @@ def _request(instruction, data, token_limit, schema=None):
         response_format = {"type":"json_schema", "json_schema":{
             "name":"recommendation", "strict": True, "schema": schema}}
     payload = {
-        "model": model, "temperature": 0, "max_tokens": token_limit,
+        "model": model, "temperature": 0, "max_tokens": token_limit, "stream": False,
         "response_format": response_format,
         "messages": [
             {"role": "system", "content": instruction},
             {"role": "user", "content": json.dumps(data, ensure_ascii=False)},
         ],
     }
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
     key = profile.key
     if key:
         headers["Authorization"] = "Bearer " + key
     try:
-        timeout = min(300, max(1, int(os.getenv("BANK_AI_TIMEOUT", "90"))))
+        deadline = monotonic() + min(300, max(1, int(os.getenv("BANK_AI_TIMEOUT", "90"))))
+
         def send():
+            timeout = deadline - monotonic()
+            if timeout <= 0:
+                raise TimeoutError()
             req = Request(endpoint, data=json.dumps(payload).encode(), headers=headers)
             if profile.custom:
                 return case_model.custom_request(profile, req.data, headers, timeout)
             with _CLIENT.open(req, timeout=timeout) as response:
                 return response.read(262145)
-        try:
-            body = send()
-        except HTTPError as error:
-            # Some OpenAI-compatible servers implement JSON objects, without JSON Schema.
-            if error.code not in (400,422) or response_format["type"]!="json_schema":
-                raise
-            error.close()
-            payload["response_format"]={"type":"json_object"}
-            body=send()
+
+        while True:
+            try:
+                body = send()
+                break
+            except HTTPError as error:
+                if error.code in (400, 422) and payload["response_format"]["type"] == "json_schema":
+                    # Some OpenAI-compatible servers support JSON objects only.
+                    payload["response_format"] = {"type": "json_object"}
+                    error.close()
+                elif retry_transient and error.code in (502, 503, 504) and deadline - monotonic() > 1:
+                    retry_transient = False
+                    error.close()
+                    sleep(.25)
+                else:
+                    raise
     except HTTPError as error:
         status=error.code
         error.close()
@@ -103,7 +124,10 @@ def _request(instruction, data, token_limit, schema=None):
                403:"Проверьте права API-ключа на выбранную модель.",
                404:"Проверьте базовый адрес API и имя модели у провайдера.",
                422:"Проверьте имя модели и поддержку JSON-ответов.",
-               429:"Исчерпан лимит запросов. Проверьте квоту или повторите позже."}
+               429:"Исчерпан лимит запросов. Проверьте квоту или повторите позже.",
+               502:"Шлюз провайдера не получил корректный ответ модели. Повторите позже.",
+               503:"Сервис модели временно недоступен. Повторите позже.",
+               504:"Шлюз провайдера не дождался ответа модели. Повторите позже."}
         raise IntelligenceError(f"Сервис модели ответил HTTP {status}. "+hints.get(status,"Проверьте доступность сервера модели.")) from None
     except WorkspaceError as error:
         raise IntelligenceError(str(error)) from None
@@ -123,11 +147,20 @@ def _request(instruction, data, token_limit, schema=None):
     try:
         if len(body) > 262144:
             raise ValueError()
-        message = json.loads(body)["choices"][0]["message"]["content"]
+        choice = json.loads(body)["choices"][0]
+        if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+            raise ValueError()
+        if choice.get("finish_reason") == "length":
+            raise IntelligenceError("Ответ модели оборвался на лимите токенов до получения полного JSON.")
+        message = choice["message"].get("content")
+        if message is None or isinstance(message, str) and not message.strip():
+            raise IntelligenceError("Сервис модели вернул пустой финальный ответ. Повторите проверку.")
         result = json.loads(message)
         if not isinstance(result, dict):
             raise ValueError()
         return result
+    except IntelligenceError:
+        raise
     except (ValueError, KeyError, IndexError, TypeError, RecursionError):
         raise IntelligenceError("Сервис ответил, но формат ответа не распознан. Проверьте поддержку Chat Completions и JSON у выбранной модели.") from None
 
@@ -138,7 +171,10 @@ def _group_findings(findings):
         category = finding["category"]
         kind = finding.get("class")
         # Exposed credential classes share a remediation and one recovery decision.
-        kind = kind if (category == "SAST" or kind == "repository-sensitive-path") and kind in _CATALOG else category
+        if finding.get("checkId") in REVIEW_RULES:
+            kind = finding["checkId"]
+        elif kind not in _CATALOG or (category != "SAST" and kind != "repository-sensitive-path"):
+            kind = category
         key = (category, kind)
         if key not in groups:
             summary, action = _CATALOG.get(kind, _CATALOG[category])
@@ -276,7 +312,8 @@ def verify_explanation(summary, findings, files):
 
 def _explicit_daily_time(prompt):
     # A delivery time or an alternative mentioned elsewhere is not a scan schedule.
-    if (len(re.findall(r"\b\d{1,2}:\d{2}\b", prompt)) != 1
+    clock_text = r"\bв\s+(?:(?P<exact>(?:[01]\d|2[0-3]):[0-5]\d)\b(?!:)|(?P<hour>0?[1-9]|1[0-2])\s+час(?:а|ов)?\s+(?P<period>утра|дня|вечера|ночи)\b)"
+    if (len(re.findall(clock_text, prompt, re.I)) != 1
             or re.search(r"\b(?:не|нет|без расписания|вручную|разово|однократно|вместо|кроме|или|либо|"
                          r"отмен\w*|отключ\w*|например|пример\w*|по будням|по выходным|только по)\b|[?«»\"]",
                          prompt, re.I)):
@@ -288,8 +325,15 @@ def _explicit_daily_time(prompt):
         return None
     if re.search(r"\b(?:если|пиши|присылай\w*|отправ\w*|уведом\w*|рассыл\w*)\b", clause, re.I):
         return None
-    clock = re.search(r"\bв\s+((?:[01]\d|2[0-3]):[0-5]\d)\b(?!:)", clause, re.I)
-    return clock.group(1) if clock else None
+    clock = re.search(clock_text, clause, re.I)
+    if clock and clock["exact"]:
+        return clock["exact"]
+    if clock:
+        hour = int(clock["hour"]) % 12
+        if clock["period"].lower() in ("дня", "вечера"):
+            hour += 12
+        return f"{hour:02}:00"
+    return None
 
 
 def generate_graph(prompt, timezone="Europe/Moscow"):
@@ -308,28 +352,32 @@ def generate_graph(prompt, timezone="Europe/Moscow"):
     timezone = schedule_zone(timezone or "Europe/Moscow").key
     nullable = lambda schema: {"anyOf":[schema, {"type":"null"}]}
     schema = {"type":"object", "additionalProperties":False, "properties":{
-        "trigger":{"enum":["manual","schedule"]}, "time":nullable({"type":"string"}),
-        "scanners":{"type":"array","items":{"enum":list(_SCANNERS)}, "minItems":1, "maxItems":3},
+        "trigger":{"enum":["manual","schedule","github_pr","webhook"]}, "time":nullable({"type":"string"}),
+        "scanners":{"type":"array","items":{"enum":list(_SCANNERS)}, "minItems":1, "maxItems":len(_SCANNERS)},
         "explain":{"type":"boolean"}, "channel":nullable({"enum":["smtp","telegram"]}),
         "condition":nullable({"type":"object", "additionalProperties":False, "properties":{
             "field":{"enum":["count","severity","path"]}, "op":{"enum":["eq","gte","regex"]},
             "value":{"anyOf":[{"type":"integer"},{"type":"string"}]}}, "required":["field","op","value"]})
     }, "required":["trigger","time","scanners","explain","channel","condition"]}
     # A model may invent a findings threshold that silently suppresses a daily notification.
-    conditional = re.search(r"\b(?:если|при|когда|только|порог\w*|услови\w*|о найден\w*|о выявлен\w*|"
+    conditional = re.search(r"\b(?:если|при|когда|порог\w*|услови\w*|о найден\w*|о выявлен\w*|"
                             r"приоритет\w*|критическ\w*|не менее|более|выше|ниже|совпад\w*|"
-                            r"if|when|unless|only|threshold|at least|critical|matches)\b|[<>=]", prompt, re.I)
+                            r"if|when|unless|threshold|at least|critical|matches)\b|[<>=]", _PR_TRIGGER.sub("", prompt), re.I)
     if not conditional:
         schema["properties"]["condition"] = {"type":"null"}
     daily_time = _explicit_daily_time(prompt)
+    explicit_pr = bool(_PR_TRIGGER.match(prompt))
+    named_scanners = [kind for kind, pattern in _NAMED_SCANNERS.items() if pattern.search(prompt)]
     if daily_time:
         schema["properties"].update(trigger={"enum":["schedule"]}, time={"enum":[daily_time]})
+    elif explicit_pr:
+        schema["properties"].update(trigger={"enum":["github_pr"]}, time={"type":"null"})
     plan = _request(
         'Convert the user request into a workflow plan JSON with precisely these keys: '
-        '{"trigger":"manual" or "schedule","time":null or "HH:MM" in the supplied timezone,'
+        '{"trigger":"manual" or "schedule" or "github_pr" or "webhook","time":null or "HH:MM" in the supplied timezone,'
         '"scanners":["secrets","sca","sast"],"explain":true/false,"channel":null or "telegram" or "smtp",'
         '"condition":null or {"field":"count|severity|path","op":"gte|eq|regex","value":0 or string}}. '
-        'Use only requested scanners, use all three when a general audit is requested. '
+        'Use secrets, sca and sast for a general audit. Optional scanners: spring_review for Spring and JVM security, package_review for npm and PyPI, github_actions for workflow permissions and pinned actions, dockerfile for the final user, java_review for Java quality and performance, dependency_review only for new vulnerable PR dependencies (use github_pr, or webhook for an explicit CI request supplying both commits). '
         'Condition gates explanations and notifications. Only create it when requested. '
         'Return no other fields. Severity values are uppercase LOW, MEDIUM, HIGH, CRITICAL. '
         'For "when findings exist", use count gte 1. For daily at 2 PM set time to 14:00. '
@@ -342,20 +390,36 @@ def generate_graph(prompt, timezone="Europe/Moscow"):
         {"request": prompt.strip(), "timezone": timezone}, 480, schema,
     )
     if (set(plan) != set(schema["required"])
-            or plan["trigger"] not in ("manual", "schedule")
+            or plan["trigger"] not in ("manual", "schedule", "github_pr", "webhook")
             or type(plan["explain"]) is not bool or plan["channel"] not in (None, "smtp", "telegram")
-            or not isinstance(plan["scanners"], list) or not 1 <= len(plan["scanners"]) <= 3
+            or not isinstance(plan["scanners"], list) or not 1 <= len(plan["scanners"]) <= len(_SCANNERS)
             or not all(s in _SCANNERS for s in plan["scanners"])
             or len(set(plan["scanners"])) != len(plan["scanners"])):
         raise IntelligenceError("Модель предложила неподдерживаемую конфигурацию сценария.")
+    # JSON-object-only providers can ignore schema enums. Explicit user choices
+    # still take precedence over the suggested plan.
+    if daily_time:
+        plan = plan | {"trigger":"schedule", "time":daily_time}
+        if "dependency_review" not in named_scanners and "dependency_review" in plan["scanners"]:
+            plan["scanners"] = [kind for kind in plan["scanners"] if kind != "dependency_review"] or ["secrets", "sca", "sast"]
+    elif explicit_pr:
+        plan = plan | {"trigger":"github_pr", "time":None}
+    if named_scanners:
+        if len(named_scanners) == 1 and re.search(r"\bтолько\b", prompt, re.I):
+            plan = plan | {"scanners": named_scanners}
+        else:
+            plan = plan | {"scanners": list(dict.fromkeys(plan["scanners"] + named_scanners))}
+    if re.search(r"\b(?:без\s+оповещений|оповещения\s+не\s+нужны)\b", prompt, re.I):
+        plan = plan | {"channel": None}
+    elif re.search(r"\b(?:пиши\w*|присылай\w*|отправляй\w*)\b[^.!?]{0,45}\b(?:телеграм\w*|telegram)\b", prompt, re.I):
+        plan = plan | {"channel": "telegram"}
+    if "dependency_review" in plan["scanners"] and plan["trigger"] not in ("github_pr", "webhook"):
+        raise IntelligenceError("Для сравнения зависимостей выберите запуск по pull request или HTTP-вебхук с базовой ревизией.")
     if plan["trigger"] == "schedule":
         if not isinstance(plan["time"], str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", plan["time"]):
             raise IntelligenceError("Не удалось подтвердить время расписания.")
     elif plan["time"] is not None:
         raise IntelligenceError("Модель предложила время для ручного запуска.")
-    if daily_time:
-        # Some providers accept only JSON object mode and ignore schema constraints.
-        plan = plan | {"trigger":"schedule", "time":daily_time}
     nodes = []
     edges = []
 

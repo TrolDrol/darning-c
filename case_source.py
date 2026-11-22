@@ -27,7 +27,7 @@ def source_candidate(path):
 def supported(path):
     parts = path.split("/")
     return (not any(part in SKIP for part in parts)
-            and (PurePosixPath(path).suffix.lower() in EXTENSIONS or parts[-1] == ".env"))
+            and (PurePosixPath(path).suffix.lower() in EXTENSIONS or parts[-1] in (".env", "settings.gradle")))
 
 def validate_files(files):
     if not isinstance(files, dict) or not 1 <= len(files) <= 1500:
@@ -54,4 +54,7 @@ def validate_files(files):
     return clean
 
 def advisory_database():
-    return json.loads((Path(__file__).parent / "case_data" / "vulnerabilities.json").read_text(encoding="utf-8"))
+    directory = Path(__file__).parent / "case_data"
+    maven = json.loads((directory / "vulnerabilities.json").read_text(encoding="utf-8"))
+    packages = json.loads((directory / "package-advisories.json").read_text(encoding="utf-8"))
+    return maven | packages

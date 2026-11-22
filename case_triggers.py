@@ -10,7 +10,8 @@ from case_store import automation_id
 from workspace import WorkspaceError
 
 
-def enqueue_webhook(store, project, automation_id_value, delivery_id, repository, revision, *, actor, request_hash=None):
+def enqueue_webhook(store, project, automation_id_value, delivery_id, repository, revision, *, actor,
+                    request_hash=None, base_revision=None):
     selected = automation_id(automation_id_value)
     if not is_bound_source(repository) or ":" not in repository:
         raise WorkspaceError("Передайте идентификатор подключённого репозитория.")
@@ -20,6 +21,8 @@ def enqueue_webhook(store, project, automation_id_value, delivery_id, repository
     if not binding or repository != "@bound:" + binding["bindingId"]:
         raise WorkspaceError("Репозиторий не подключён к этому проекту.", 404)
     event = {"type": "webhook", "deliveryId": delivery_id, "revision": selected_revision(revision)}
+    if base_revision is not None:
+        event["baseSha"] = selected_revision(base_revision)
     runs = _dispatch(store, project, binding, event, selected=selected, actor=actor, request_hash=request_hash)
     return runs[0]
 
@@ -35,10 +38,7 @@ def _dispatch(store, project, binding, event, *, actor, selected=None, request_h
     delivery = event["deliveryId"]
     fingerprint = sha256(json.dumps([event, reference, request_hash], sort_keys=True).encode()).hexdigest()
     with store.connection() as q:
-        if store.postgres:
-            q("SELECT id FROM bank_project WHERE id=? FOR UPDATE", (project,)).fetchone()
-        else:
-            q("BEGIN IMMEDIATE")
+        store.lock_project(q, project)
         prior = q("""SELECT fingerprint,result FROM studio_event_receipt
                      WHERE project_id=? AND source=? AND delivery=?""", (project, source, delivery)).fetchone()
         if prior:
@@ -49,7 +49,7 @@ def _dispatch(store, project, binding, event, *, actor, selected=None, request_h
             row = q("""SELECT automation_id,graph,repository FROM studio_event_subscription
                        WHERE project_id=? AND automation_id=? AND kind='webhook'""", (project, selected)).fetchone()
             if not row:
-                raise WorkspaceError("Сохраните готовый сценарий с начальным блоком «HTTP-вебхук».", 409)
+                raise WorkspaceError("Включите ожидание в сценарии с начальным блоком «HTTP-вебхук».", 409)
             if row["repository"] and row["repository"] != reference:
                 raise WorkspaceError("Репозиторий запроса отличается от источника сохранённого сценария.", 409)
             rows = [row]

@@ -24,6 +24,7 @@ const auditActions = {
   "ci.key.create": "Создан ключ CI/CD", "ci.key.revoke": "Отозван ключ CI/CD", "project.rename": "Проект переименован",
   save_draft: "Сохранён черновик", publish: "Опубликован сценарий", enqueue: "Поставлена в очередь проверка",
   "finding.triage": "Разобрано замечание", "smtp.retry": "Повторена отправка почты", "github.retry": "Повторена отправка в GitHub",
+  "project.smtp.set": "Назначен получатель SMTP", "project.smtp.clear": "Снято назначение получателя SMTP",
   "organization.create": "Создано предприятие", "project.create": "Создан проект", "organization.member.set": "Назначена роль на предприятии",
   "organization.member.remove": "Удалён сотрудник", "project.member.set": "Назначена роль в проекте", "project.member.remove": "Удалён участник проекта",
   "invite.create": "Создано приглашение", "invite.revoke": "Отозвано приглашение", "invite.accept": "Принято приглашение",
@@ -397,7 +398,7 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
       ${button("Назначить роль", "organization-member")}${button("Пригласить", "organization-invite", "", true)}</div>`) : "";
     const projectRoster = chosenProject ? tile(chosenProject.name,
       rosterTable(projectMembers, canManageProject, "project"), canManageProject ? `<div class="portal-actions">
-      ${button("Ключи CI/CD", "ci-keys")}${button("Добавить участника", "project-member")}${button("Пригласить", "project-invite", "", true)}</div>` : "") : "";
+      ${button("Ключи CI/CD", "ci-keys")}${button("Получатель SMTP", "project-smtp")}${button("Добавить участника", "project-member")}${button("Пригласить", "project-invite", "", true)}</div>` : "") : "";
     const inviteTile = invitations.length ? tile("Действующие приглашения", list(invitations.map(invite => `
       <div><strong class="portal-card-name">${esc(invite.projectId ? chosenProject?.name : selected?.name)}</strong>
       ${roleChip(invite.projectRole || invite.organizationRole)}<p class="portal-muted">Действует до ${timestamp(invite.expiresAt)}</p></div>
@@ -462,6 +463,43 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
     showDialog("Отозвать ключ CI/CD?", "<p>Новые запросы с этим ключом перестанут приниматься.</p>", "Отозвать", async () => {
       await request(endpoint("ci/keys", {project: selected}), {action: "revoke", id});
       return ciKeys;
+    });
+  }
+
+  async function smtpRecipient() {
+    const selected = project;
+    const marker = revision;
+    const url = endpoint("project/smtp", {project: selected});
+    const {configured, managedByOperator, own, verifiedEmail} = await request(url);
+    if (marker !== revision) return;
+    if (managedByOperator) {
+      showDialog("Получатель SMTP", "<p>Оператор назначил общий адрес проекта. На него приходят сводки ручных и автоматических запусков.</p>");
+      return;
+    }
+    const canSet = Boolean(verifiedEmail && (!own || !configured));
+    let status = "Получатель проекта пока не назначен или недоступен.";
+    if (configured) status = own
+      ? `Назначен ваш подтверждённый адрес <strong>${esc(verifiedEmail)}</strong>.`
+      : "Назначен подтверждённый адрес другого руководителя.";
+    const help = canSet
+      ? `<p>${configured ? "Заменить текущего получателя вашим подтверждённым адресом" : "Назначить ваш подтверждённый адрес"} <strong>${esc(verifiedEmail)}</strong>?</p>`
+      : verifiedEmail ? "" : "<p>Подтвердите адрес в меню профиля → «Привязка почты».</p>";
+    const clear = configured || own ? `<div class="portal-actions">${button("Снять назначение", "project-smtp-clear")}</div>` : "";
+    showDialog("Получатель SMTP", `<p>${status}</p>
+      <p>Настройка действует для автоматических запусков проекта. Письмо содержит число замечаний и ссылку на отчёт.</p>
+      ${help}${clear}`,
+      "Назначить свою почту", canSet ? async () => {
+        await request(url, {action: "set"});
+        return () => announce("Получатель SMTP проекта сохранён.");
+      } : null);
+  }
+
+  function clearSmtpRecipient() {
+    const selected = project;
+    showDialog("Снять назначение получателя SMTP?",
+      "<p>Сводки автоматических запусков по почте возобновятся после назначения получателя.</p>", "Снять назначение", async () => {
+      await request(endpoint("project/smtp", {project: selected}), {action: "clear"});
+      return () => announce("Назначение получателя SMTP снято.");
     });
   }
 
@@ -603,6 +641,8 @@ export function createPortal({page, request, announce, getProjectId, getViewer =
     "project-member": id => changeMember("project", id),
     "ci-keys": ciKeys,
     "ci-revoke": revokeCiKey,
+    "project-smtp": smtpRecipient,
+    "project-smtp-clear": clearSmtpRecipient,
     "organization-invite": () => inviteMember("organization"),
     "project-invite": () => inviteMember("project"),
     "revoke-invite": revokeInvite,

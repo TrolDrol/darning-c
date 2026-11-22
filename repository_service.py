@@ -340,6 +340,7 @@ class RepositoryService:
             return None
         from case_store import StudioStore
         from case_triggers import enqueue_github
+        from case_repair_git import REPAIR_BRANCH
         binding = {"bindingId": binding_id, "repositoryId": config.repository_id,
                    "repository": config.repository, "installationId": config.installation_id}
         if kind == "push":
@@ -352,11 +353,16 @@ class RepositoryService:
             if (payload.get("deleted") or not isinstance(ref, str) or not ref.startswith("refs/heads/")
                     or not len("refs/heads/") < len(ref) <= 1024 or not sha or sha == "0" * 40):
                 return None
+            if REPAIR_BRANCH.fullmatch(ref.removeprefix("refs/heads/")):
+                return None
             event = {"type": "github_push", "deliveryId": delivery, "revision": sha, "ref": ref}
             runs = enqueue_github(StudioStore(self.store), project, binding, event)
             return {"studioRuns": runs} if runs else None
         pr = parse_pull_request(config, delivery, payload)
         if not pr:
+            return None
+        head = object_value(object_value(payload.get("pull_request")).get("head")).get("ref")
+        if isinstance(head, str) and REPAIR_BRANCH.fullmatch(head):
             return None
         event = {"type": "github_pr", "deliveryId": delivery, "revision": pr["headSha"],
                  "prNumber": pr["prNumber"], "baseSha": pr["baseSha"], "action": payload["action"]}

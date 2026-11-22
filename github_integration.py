@@ -9,13 +9,14 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.client import HTTPException
-from time import time
+from time import sleep, time
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import UUID
 
-from analyzers import RULES
+from analyzers import REPORT_RULES
+from case_severity import RANK, reaches
 from settings import secret
 
 
@@ -205,6 +206,18 @@ def api_request(path, token, *, method="GET", payload=None, limit=MAX_JSON, expe
         "User-Agent": "darning-code-review",
         "X-GitHub-Api-Version": API_VERSION,
     })
+    attempts = 3 if method == "GET" and payload is None and path.startswith("/repos/") else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return _api_response(request, path, limit, expected_type)
+        except GitHubError as error:
+            if attempt == attempts or not error.retryable or not (error.status == 408 or 500 <= error.status < 600):
+                raise
+            sleep(0.5 * attempt)
+
+
+def _api_response(request, path, limit, expected_type):
+    method = request.get_method()
     mutation = method != "GET"
     try:
         with OPENER.open(request, timeout=5) as response:
@@ -396,6 +409,18 @@ def snapshot_tree(config, prefix, token, tree_sha, engines, *, base=False):
         raise GitHubError(str(error), error.status) from None
 
 
+def pull_request_merge_base(prefix, token, base_sha, head_sha):
+    if not sha_value(base_sha) or not sha_value(head_sha):
+        raise GitHubError("Для сравнения нужны обе ревизии pull request.", 422)
+    # Changed-file patches are present only on page one. Only the commit ID is needed.
+    pair = f"{base_sha}...{head_sha}"
+    comparison = api_request(f"{prefix}/compare/{pair}?per_page=1&page=2", token)
+    ancestor = sha_value(object_value(comparison.get("merge_base_commit")).get("sha"))
+    if not ancestor:
+        raise GitHubError("GitHub не подтвердил общего предка коммитов pull request.", 422)
+    return ancestor
+
+
 def load_snapshots(config, event, engines=("python", "config")):
     prefix = repository_api(config, event)
     engines = tuple(engines)
@@ -403,11 +428,8 @@ def load_snapshots(config, event, engines=("python", "config")):
 
     def read_base():
         try:
-            pair = f"{event['baseSha']}...{event['headSha']}"
-            # Changed-file patches are present only on page one.
-            comparison = api_request(f"{prefix}/compare/{pair}?per_page=1&page=2", token)
-            merge_base = sha_value(object_value(comparison.get("merge_base_commit")).get("sha"))
-            return read_snapshot(config, prefix, token, merge_base, engines, base=True) if merge_base else None
+            merge_base = pull_request_merge_base(prefix, token, event["baseSha"], event["headSha"])
+            return read_snapshot(config, prefix, token, merge_base, engines, base=True)
         except GitHubError:
             return None
 
@@ -474,24 +496,25 @@ def is_current_head(config, event):
 
 def annotations(config, findings, coverage=()):
     scanned = {(item["engine"], item["file"]) for item in coverage if item.get("status") == "done"}
-    selected = sorted(findings, key=lambda finding: finding.get("level") != "high")
+    selected = sorted(findings, key=lambda finding: RANK.get(finding.get("level"), 0), reverse=True)
     items = []
     for finding in selected:
         if len(items) == 10:
             break
-        rule = RULES.get(finding.get("ruleId"))
+        rule = REPORT_RULES.get(finding.get("ruleId"))
         line = finding.get("line")
-        if not rule or not positive_id(line):
+        if not rule or not rule.get("title") or not rule.get("fix") or not positive_id(line):
             continue
         engine, path = rule["engine"], finding.get("file")
-        allowed = config.paths[engine]
-        if (allowed and path != allowed) or (not allowed and (engine, path) not in scanned):
+        allowed = config.paths.get(engine)
+        coverage_engine = "dependency_review_diff" if finding["ruleId"] == "DEP-PR-001" else engine
+        if (allowed and path != allowed) or (not allowed and (coverage_engine, path) not in scanned):
             continue
         items.append({
             "path": finding["file"],
             "start_line": line,
             "end_line": line,
-            "annotation_level": "warning" if rule["level"] == "high" else "notice",
+            "annotation_level": "warning" if reaches(finding.get("level", rule.get("level")), "high") else "notice",
             "title": f"{finding['ruleId']} · {rule['title']}",
             "message": rule["fix"],
         })

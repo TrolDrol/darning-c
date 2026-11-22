@@ -17,6 +17,9 @@ ACTIONS = {
     "github.connect.request": "Запрошена привязка репозитория", "github.connect.verified": "Подключён репозиторий",
     "github.scope": "Изменена область проверки", "github.disconnect": "Отключён репозиторий",
     "project.create": "Создан проект", "project.member.set": "Назначена роль", "project.member.remove": "Удалён участник",
+    "project.smtp.set": "Назначен получатель SMTP", "project.smtp.clear": "Снято назначение получателя SMTP",
+    "repair.start": "Начат сеанс исправления", "repair.continue": "Запрошен следующий раунд",
+    "repair.accept": "Подтверждено слияние исправлений", "repair.stop": "Остановлен сеанс исправления",
     "invite.create": "Создано приглашение", "invite.revoke": "Отозвано приглашение", "invite.accept": "Принято приглашение",
 }
 RUN_STATUS = {
@@ -77,7 +80,8 @@ def _run_rows(run, studio=False):
 
 def _audit_row(action, subject, timestamp, actor, item_id):
     target = {"enqueue": "run", "finding.triage": "run", "smtp.retry": "delivery",
-              "github.retry": "delivery", "issue.update": "issue"}.get(action)
+              "github.retry": "delivery", "issue.update": "issue", "repair.start": "graph",
+              "repair.continue": "graph", "repair.accept": "graph", "repair.stop": "graph"}.get(action)
     return {
         "at": _timestamp(timestamp), "category": "audit", "event": ACTIONS.get(action, action),
         "actor": actor, "object": subject, "target": target, "runId": subject,

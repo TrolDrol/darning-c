@@ -20,7 +20,11 @@ def as_project_run(project, report, started, completed):
     graph = report.get("graph") or {}
     version = report.get("graphVersion") or sha256(json.dumps(graph, sort_keys=True).encode()).hexdigest()[:12]
     stages = report.get("stages", [])
-    coverage = report.get("coverage", [])
+    # The same path can be checked against a different literal or package catalog.
+    # A successful check under those settings cannot close earlier findings.
+    configuration_scopes = {"literal_review": "literal_review_config", "package_review": "package_review_catalog"}
+    coverage = [entry | {"engine": configuration_scopes.get(entry["engine"], entry["engine"])}
+                for entry in report.get("coverage", [])]
     checked = {entry["engine"] for entry in coverage}
     findings = []
     incomplete = 0
@@ -66,6 +70,8 @@ def as_project_run(project, report, started, completed):
 
 
 def save_graph_run(db, project, report, started, completed):
+    if report.get("repair"):
+        return
     run = as_project_run(project, report, started, completed)
     created = db.execute("""INSERT INTO bank_run(id,project_id,workflow_version,report,created_at,created_by)
         VALUES (%s,%s,NULL,%s,%s,%s) ON CONFLICT (id) DO NOTHING RETURNING id""",

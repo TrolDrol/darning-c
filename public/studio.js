@@ -1,18 +1,23 @@
 import {createCanvas, labels, localTimezone, nodeIcon} from '/studio_canvas.js';
 import {bindReportActions, reportMarkup} from '/studio_report.js';
-import {mountIntegrations} from '/studio_integrations.js';
-import {discussion, modelDialog} from '/studio_discussion.js';
+import {mountRepair} from '/studio_repair.js';
+import {openModelConnection} from '/studio_integrations.js';
+import {discussion} from '/studio_discussion.js';
 import {libraryMarkup, mountLibrary} from '/studio_library.js';
+import {formatScheduleTime, mountActivity, scheduleTiming} from '/studio_activity.js';
+import {portNames} from '/studio_ports.js';
 import {githubFields, mountGithub, githubSelection, boundSourceOptions, repositoryName, archiveBase64, projectUpload} from '/source_picker.js';
 
 const nodeGroups = [
+  ["Языки и зависимости", [["spring_review","Безопасность Spring и JVM"],["spring_routes","Карта маршрутов с координатами обработчиков"],["package_review","Сверка версий npm и PyPI со справочником"]]],
+  ["Ревью репозитория", [["dependency_review","Новые уязвимые зависимости в pull request"],["github_actions","Права заданий и версии внешних действий"],["dockerfile","Пользователь итогового контейнера"],["java_review","Качество и оптимизация исходников Java"]]],
   ["Экспериментальные проверки", [["ai_review", "Проверка статических признаков моделью"]]],
-  ["Пользовательские", [["custom","Своя последовательность операций над строками"],["json_keys","Поиск повторных ключей в одном объекте JSON"]]],
+  ["Пользовательские", [["custom","Своя последовательность операций над строками"],["literal_review","Поиск текста в содержимом файлов с координатами"],["json_keys","Поиск повторных ключей в одном объекте JSON"]]],
   ["Запуск", [["manual", "По нажатию кнопки"], ["schedule", "По времени и часовому поясу"],
     ["github_pr", "При открытии или обновлении pull request"], ["github_push", "При push в ветку репозитория"],
     ["webhook", "По команде из CI/CD"]]],
   ["Данные и проверки", [["source", "GitHub, папка или архив"], ["regex", "Совпадения в списке строк"], ["secrets", "Секреты в тексте"], ["sast", "Код и конфигурация"], ["sca", "Зависимости Gradle и Maven"]]],
-  ["Обработка", [["condition", "Разветвление по условию"], ["explain", "Рекомендации по находкам"], ["verify", "Проверка рекомендаций"]]],
+  ["Обработка", [["condition", "Разветвление по условию"], ["model_load", "Подключает модель к шагам ИИ"], ["explain", "Рекомендации по находкам"], ["verify", "Проверка рекомендаций"]]],
   ["Доставка", [["notify", "Telegram или почта"]]]
 ];
 
@@ -25,6 +30,17 @@ const toolbarPaths = {
 };
 function icon(key) {
   return `<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${toolbarPaths[key]}"/></svg>`;
+}
+const waitingLabel = {github_pr:"Ожидает pull request", github_push:"Ожидает push", webhook:"Ожидает HTTP-вебхук", schedule:"Ожидает времени запуска"};
+const runStatus = {queued:"В очереди",running:"Выполняется",done:"Готово",completed:"Завершён",passed:"Пройден",
+  review:"Есть замечания",failed:"Ошибка",partial:"Частичный результат",skipped:"Пропущен"};
+function trigger(graph) {
+  const entries = graph.nodes.filter(n => n.type === "manual" || Object.hasOwn(waitingLabel,n.type));
+  return entries.length === 1 ? entries[0].type : null;
+}
+function triggerSettings(graph) {
+  const kind = trigger(graph);
+  return JSON.stringify([kind, graph.nodes.find(n=>n.type===kind)?.params || {}, graph.nodes.find(n=>n.type==="source")?.params?.repository || ""]);
 }
 function editorHash(automationId, runId = "") {
   const route = "#scenarios" + (runId ? "/automation/" + encodeURIComponent(runId) : "");
@@ -50,11 +66,12 @@ function mountMetricsHelp(form){
 }
 
 export function createStudio({page,request,getProjectId,hasRepositorySettings,canWrite,announce,escape:e,getSourcePolicy}){
-  let generation=0,canvas,timer,session;
+  let generation=0,canvas,timer,scheduleTimer,session,closeActivity,closeRepair;
   const drafts=new Map();
   const dirty=()=>Boolean(session?.changed);
   function leave(){
-    generation++;clearTimeout(timer);canvas?.dispose();canvas=null;
+    generation++;clearTimeout(timer);clearTimeout(scheduleTimer);closeActivity?.();closeActivity=null;canvas?.dispose();canvas=null;
+    closeRepair?.();closeRepair=null;
     if(session?.changed)drafts.set(session.draftKey,session.graph);
     session?.dialog?.close();session=null;
   }
@@ -85,24 +102,44 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
     const empty = graph.nodes.length === 0;
     s.section.querySelector("[data-empty-graph]").hidden = !empty || s.snapshot;
     const save = s.section.querySelector("[data-save-graph]");
-    if (save) {
-      const inactive = !s.activeEvent && s.graph.nodes.some(node => ["github_pr","github_push","webhook"].includes(node.type));
-      save.disabled = (!s.changed && !inactive) || s.saving;
-    }
+    if (save) save.disabled = !s.changed || s.saving;
+    const kind = trigger(s.graph);
+    const active = s.activeEvent || (s.scheduleTime && "schedule");
+    const sameSettings = triggerSettings(s.graph) === s.savedSettings;
+    const configured = active === kind && !s.savedDraft && sameSettings;
     const run = s.section.querySelector('[data-modal="run"]');
-    if (run) run.disabled = empty;
-    const schedule = s.section.querySelector("[data-library-schedule]");
-    if (schedule) {
-      schedule.hidden = s.snapshot || !s.scheduleHeld || !s.graph.nodes.some(n=>n.type==="schedule");
-      schedule.querySelector("button")?.toggleAttribute("disabled", Boolean(s.saving));
+    if (run) run.hidden = s.snapshot || kind !== "manual";
+    const enable = s.section.querySelector("[data-trigger-enable]");
+    if (enable) {
+      enable.hidden = s.snapshot || !Object.hasOwn(waitingLabel,kind) || configured;
+      enable.disabled = Boolean(s.saving);
+      enable.textContent = kind === "schedule" && active === kind ? "Применить расписание" :
+        s.changed ? "Сохранить и включить" : "Включить сценарий";
     }
+    const pause = s.section.querySelector("[data-trigger-pause]");
+    if (pause) { pause.hidden = s.snapshot || !active; pause.disabled = Boolean(s.saving); }
+    const status = s.section.querySelector("[data-trigger-state]");
+    status.parentElement.hidden = s.snapshot || (!active && !Object.hasOwn(waitingLabel,kind));
+    let stateText;
+    if (active === "schedule") {
+      const next = formatScheduleTime(s.activeSchedule?.nextRunAt, s.activeSchedule?.timezone);
+      const latest = s.runs[0];
+      const last = formatScheduleTime(latest?.created_at, s.activeSchedule?.timezone);
+      stateText = ["Расписание включено", scheduleTiming(s.activeSchedule), next && "Следующий запуск " + next,
+        latest && ["Последний запуск", last, "—", (runStatus[latest.status] || latest.status).toLowerCase()].filter(Boolean).join(" "),
+        (s.changed || s.savedDraft || !sameSettings) && "действует сохранённая версия"].filter(Boolean).join(" · ");
+    } else {
+      stateText = active ? (waitingLabel[active] + (s.changed || active !== kind ? " · сохранённая версия" : "")) :
+        kind === "schedule" ? "Расписание выключено" : "Ожидание выключено";
+    }
+    if (status.textContent !== stateText) status.textContent = stateText;
     s.section.querySelector("[data-draft-label]").classList.toggle("is-dirty", s.changed && !s.snapshot);
   }
   function closeDrawer(s, restoreFocus=false) {
     s.section.querySelectorAll(".automation-drawer").forEach(drawer=>drawer.hidden=true);
     s.section.querySelectorAll("[data-picker]").forEach(button=>button.setAttribute("aria-expanded","false"));
     if(restoreFocus && s.drawerOpener?.isConnected) s.drawerOpener.focus({preventScroll:true});
-    s.drawerOpener=null;s.addOrigin=null;
+    s.drawerOpener=null;s.addOrigin=null;s.addPosition=null;
   }
   function filterNodes(s) {
     const drawer=s.section.querySelector("[data-node-catalog]");
@@ -117,12 +154,12 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
     drawer.querySelectorAll("[data-node-group]").forEach(group=>group.hidden=!group.querySelector("[data-picker-type]:not([hidden])"));
     drawer.querySelector("[data-no-matches]").hidden=Boolean(count);
   }
-  function openCatalog(s,origin=null) {
+  function openCatalog(s,origin=null,position=null,opener=document.activeElement) {
     if(!canWrite()||s.snapshot)return;
-    const opener=document.activeElement;
-    closeDrawer(s);s.drawerOpener=opener;s.addOrigin=origin;
+    closeDrawer(s);s.drawerOpener=opener;s.addOrigin=origin;s.addPosition=position;
     const el=s.section.querySelector("[data-node-catalog]");
-    el.querySelector("h2").textContent=!s.graph.nodes.length?"Первый шаг":origin?"Следующий шаг":"Добавить шаг";
+    el.querySelector("h2").textContent=origin?`К ${origin.side==="input"?"входу":"выходу"} «${portNames[origin.port]}»`:
+      !s.graph.nodes.length?"Первый шаг":"Добавить шаг";
     const search=el.querySelector("[data-node-search]");
     search.value="";filterNodes(s);el.hidden=false;search.focus({preventScroll:true});
     s.section.querySelectorAll("[data-picker]").forEach(button=>button.setAttribute("aria-expanded","true"));
@@ -132,15 +169,42 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
     closeDrawer(s);s.drawerOpener=opener;
     s.section.querySelector("[data-node-inspector]").hidden=false;
   }
-  function openHistory(s,scroll=true) {
+  function openHistory(s) {
     const history=s.section.querySelector("[data-run-log]");
     history.open=true;
-    if(scroll)history.scrollIntoView({block:"start"});
-    if(!s.report&&s.runs.length && !s.read) selectRun(s.runs[0].id,false,false);
+    if(!s.report&&s.runs.length && !s.read) selectRun(s.runs[0].id,false);
+  }
+  function refreshSchedule(s) {
+    if (s !== session) return;
+    clearTimeout(scheduleTimer);
+    if (!s.scheduleTime || s.saving) return;
+    const revision = s.scheduleRefreshRevision;
+    scheduleTimer = window.setTimeout(async () => {
+      try {
+        const state = await request(s.overviewUrl);
+        if (s !== session || revision !== s.scheduleRefreshRevision) return;
+        s.scheduleTime = state.scheduleTime;
+        s.activeSchedule = state.activeSchedule;
+        s.activeEvent = state.activeEvent;
+        s.savedDraft = state.draft;
+        s.savedSettings = triggerSettings(state.graph);
+        const runs = state.runs || [];
+        if (JSON.stringify(runs) !== JSON.stringify(s.runs)) {
+          s.runs = runs;
+          showRunOrder();
+          if (s.section.querySelector("[data-run-log]").open) openHistory(s);
+        }
+        updateEditorState(s);
+      } catch {
+        // Keep the last known schedule and retry after a transient request failure.
+      } finally {
+        if (revision === s.scheduleRefreshRevision) refreshSchedule(s);
+      }
+    }, 5000);
   }
   function showRunOrder(){
     const hist=session.section.querySelector("[data-history]"),id=session.report?.id||"";
-    hist.innerHTML=`<option value="">Выберите запуск</option>`+session.runs.map(r=>`<option value="${e(r.id)}">${e(String(r.id).slice(0,8))} · ${e(({queued:"В очереди",running:"Выполняется",done:"Готово",completed:"Завершён",passed:"Пройден",review:"Есть замечания",failed:"Ошибка",partial:"Частичный результат"})[r.status]||r.status)}</option>`).join("");
+    hist.innerHTML=`<option value="">Выберите запуск</option>`+session.runs.map(r=>`<option value="${e(r.id)}">${e(String(r.id).slice(0,8))} · ${e(runStatus[r.status]||r.status)}</option>`).join("");
     hist.value=id;
   }
   function mode(snapshot, redraw=true){
@@ -155,10 +219,10 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
     if(redraw)canvas.draw();
     if(s.snapshot)canvas.statuses(s.report.stages);
   }
-  async function selectRun(id,scroll=false,snapshot=true){
+  async function selectRun(id,snapshot=true){
     clearTimeout(timer);const s=session, version=++s.read;
     const target=s.section.querySelector("[data-report]");
-    if(!id){s.report=null;mode(false);target.innerHTML="<p>Выберите проверку из истории.</p>";return;}
+    if(!id){closeRepair?.();closeRepair=null;s.report=null;mode(false);target.innerHTML="<p>Выберите проверку из истории.</p>";return;}
     try{
       const run=await request(endpoint(s.project,"/run")+"&id="+encodeURIComponent(id));if(s!==session||version!==s.read)return;
       if(run.automationId && run.automationId!==s.automationId){
@@ -168,17 +232,23 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
       const redraw=s.report?.id!==id||s.snapshot!==showSnapshot;s.report=run;
       const row=s.runs.find(r=>r.id===id);if(row)row.status=run.status;else s.runs.unshift({id,status:run.status});
       const opened=new Set([...target.querySelectorAll("details[open][data-packet]")].map(el=>el.dataset.packet));
+      closeRepair?.();closeRepair=null;
       showRunOrder();target.innerHTML=reportMarkup(run,e,labels);
       target.querySelectorAll("[data-packet]").forEach(el=>el.open=opened.has(el.dataset.packet));
       mode(showSnapshot,redraw);
-      if(scroll)openHistory(s);
-      if(["queued","running","pending"].includes(run.status))timer=window.setTimeout(()=>selectRun(id,false,null),1400);
+      if(["queued","running","pending"].includes(run.status))timer=window.setTimeout(()=>selectRun(id,null),1400);
+      else closeRepair=mountRepair(target,{request,project:s.project,report:run,canWrite,announce,escape:e});
     }catch(error){
       if(s===session&&version===s.read)target.innerHTML=`<p role="alert">${e(error.message)}</p><button type="button" class="button" data-read-run="${e(id)}">Повторить загрузку</button>`;
     }
   }
   function modal(kind,sourceParams=new URLSearchParams()){
     const s=session,d=s.dialog;
+    if(kind==="run" && trigger(s.graph)!=="manual"){
+      announce("Для разовой проверки выберите сценарий с начальным шагом «Ручной запуск» в списке сверху.");
+      s.section.querySelector("[data-automation-select]").focus();
+      return;
+    }
     const repository=repositoryName(sourceParams.get("repository")||"");
     const revision=sourceParams.get("revision");
     const boundRepository=repository&&s.repositories.find(item=>item.repository.toLowerCase()===repository.toLowerCase());
@@ -190,7 +260,7 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
         <div data-directory hidden><label class="field">Каталог проекта<input type="file" name="directory" webkitdirectory multiple></label></div>
         <div data-files hidden><label class="field">Файлы проекта<input type="file" name="files" multiple></label></div>
         <div data-archive hidden><label class="field">ZIP-архив проекта · до 8 МБ<input type="file" name="archive" accept=".zip,application/zip"></label></div>
-        <details data-advisories hidden><summary>Справочник уязвимостей (SCA)</summary><p id="sca-help">Встроенный справочник используется автоматически. Чтобы сверить зависимости со своим набором, выберите JSON со списком vulnerabilities.</p><label class="field">Свой справочник, необязательно<input name="database" type="file" accept=".json" aria-describedby="sca-help"></label></details>
+        <details data-advisories hidden><summary>Справочник уязвимостей (SCA)</summary><p id="sca-help">По умолчанию используется встроенный справочник. Для npm и PyPI в нём две демонстрационные записи. Для своего набора загрузите JSON со списком vulnerabilities и при необходимости packageVulnerabilities.</p><label class="field">Свой справочник, необязательно<input name="database" type="file" accept=".json" aria-describedby="sca-help"></label></details>
         <div class="metrics-option"><label><input type="checkbox" name="dependencyMetrics" aria-describedby="metrics-help"> Запросить публичные метрики зависимостей</label>
         <button type="button" data-metrics-help aria-label="Какие данные используются для метрик" aria-expanded="false" aria-controls="metrics-help" aria-describedby="metrics-help">?</button>
         <p id="metrics-help" role="tooltip" hidden>Сервис передаст названия и версии зависимостей в deps.dev и запросит данные репозиториев на GitHub. В отчёте появятся дата создания репозитория и число скачиваний файлов последних десяти релизов. Просмотры за 14 дней доступны с разрешения владельца.</p></div>`,
@@ -203,7 +273,8 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
         <label class="field">Название<input name="name" maxlength="100" required></label>
         <label class="field">Для чего подходит сценарий<textarea name="description" required maxlength="500" rows="2"></textarea></label>
         <small>Публикуется копия графа. Название и описание увидит выбранная аудитория. Репозиторий, модель, папки и внутренние пути в условиях получатель настроит в своём проекте.</small>
-        ${s.graph.nodes.some(node => ["regex","custom"].includes(node.type)) ? "<small>Регулярные выражения, названия и операции пользовательских нод будут видны получателям. Ручной список строк каждый заполняет у себя.</small>" : ""}`,
+        ${s.graph.nodes.some(node => ["regex","custom"].includes(node.type)) ? "<small>Регулярные выражения, названия и операции пользовательских нод будут видны получателям. Ручной список строк каждый заполняет у себя.</small>" : ""}
+        ${s.graph.nodes.some(node => node.type === "literal_review") ? "<small>В шаблон попадут название, текст поиска и параметры текстового правила. Используйте общедоступные значения.</small>" : ""}`,
       library:libraryMarkup(canWrite(), canWrite()&&!s.snapshot&&s.graph.nodes.length>0)
     };
     const actions={run:"Запустить проверку",create:"Создать",generate:"Собрать сценарий",template:"Опубликовать"};
@@ -230,7 +301,6 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
       }
       form.elements.source.addEventListener("change",sourceChanged);sourceChanged();
     }
-    if(kind==="generate"&&s.pendingPrompt){d.querySelector("[name=prompt]").value=s.pendingPrompt;s.pendingPrompt="";}
     d.querySelector("h2").id="studio-dialog-title";if(!d.open)d.showModal();
     if(kind==="library") mountLibrary(d.querySelector("form"), {
       url:endpoint(s.project,"/library"), projectUrl:endpoint(s.project), request, escape:e, writable:canWrite(),
@@ -245,20 +315,23 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
     if (!all.length) throw Error("Выберите папку проекта.");
     return projectUpload(all,getSourcePolicy(),true);
   }
-  async function action(kind,form,enableSchedule=false){
+  async function action(kind,form,enable=false){
     const s=session;if(!s||s.busy||!canWrite())return;
     const button=form?.querySelector("[type=submit]");
     const buttonLabel=button?.textContent;
     const errorPlace=form?.querySelector("[role=alert]");
     if(errorPlace)errorPlace.textContent="";
     s.busy=true;if(button)button.disabled=true;
-    if(kind==="save"){s.saving=true;updateEditorState(s);}
+    if(kind==="save" || kind==="pause"){
+      s.saving=true;s.scheduleRefreshRevision++;refreshSchedule(s);updateEditorState(s);
+    }
     if(kind==="generate"){form.setAttribute("aria-busy","true");button.textContent="Собираем сценарий…";}
     const editBefore=JSON.stringify(s.graph);
     try{
       const params={action:kind,automationId:s.automationId};
       if(["save","template","run"].includes(kind))params.graph=structuredClone(s.graph);
       if(kind==="run"){
+        if(trigger(s.graph)!=="manual") throw Error("Для проверки по кнопке выберите ручной сценарий.");
         const source=form.elements.source.value;
         if(source==="local")Object.assign(params,await upload(form));
         else if(source==="files")Object.assign(params,await projectUpload([...form.elements.files.files],getSourcePolicy(),false));
@@ -277,7 +350,14 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
         params.dependencyMetrics=form.elements.dependencyMetrics.checked;
       }
       if(kind==="template"){params.name=form.elements.name.value;params.description=form.elements.description.value;params.scope=form.elements.scope.value;}
-      if(kind==="save"&&enableSchedule)params.enableSchedule=true;
+      if(kind==="save"){
+        const settings=triggerSettings(params.graph);
+        const [savedKind,,savedRepository]=JSON.parse(s.savedSettings);
+        const [newKind,,newRepository]=JSON.parse(settings);
+        const rescheduling=s.scheduleTime && savedKind==="schedule" && newKind==="schedule" && savedRepository===newRepository;
+        if(enable) params.triggerEnabled=true;
+        else if ((!s.activeEvent && !s.scheduleTime) || (settings!==s.savedSettings && !rescheduling)) params.triggerEnabled=false;
+      }
       if(kind==="create")params.name=form.elements.name.value.trim();
       if(kind==="generate"){params.prompt=form.elements.prompt.value;params.timezone=localTimezone();}
       if(s!==session)return;
@@ -287,17 +367,22 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
       if(kind==="create"){
         s.dialog.close();location.hash=editorHash(answer.automationId);
         announce("Сценарий создан. Выберите первый шаг.");
+      }else if(kind==="pause"){
+        s.activeEvent=answer.activeEvent;s.scheduleTime=answer.scheduleTime;s.activeSchedule=null;
+        announce("Ожидание выключено. Уже начатые проверки продолжат работу.");
       }else if(kind==="save"){
-        s.scheduleHeld=Boolean(answer.scheduleHeld);
-        if (!answer.draft) s.activeEvent = answer.graph.nodes.find(n => ["github_pr","github_push","webhook"].includes(n.type))?.type;
+        s.scheduleTime=answer.scheduleTime;s.activeEvent=answer.activeEvent;s.activeSchedule=answer.activeSchedule;
+        s.savedDraft=answer.draft;
+        s.savedSettings=triggerSettings(params.graph);
         if(editBefore===JSON.stringify(s.graph)){
           drafts.delete(s.draftKey);s.changed=false;s.section.querySelector("[data-draft-label]").textContent=answer.draft?"Черновик сохранён":"Сценарий сохранён";
           updateEditorState(s);
         }
-        announce(answer.draft ? "Черновик сохранён." + (answer.scheduleTime || s.activeEvent ? " Автоматический запуск использует последнюю готовую версию." : "") : "Сценарий сохранён.");
+        announce(answer.draft ? "Черновик сохранён." + (s.scheduleTime || s.activeEvent ? " Автоматический запуск использует последнюю готовую версию." : "") :
+          s.scheduleTime ? "Расписание сохранено и включено." :
+          enable ? "Сценарий включён. "+waitingLabel[trigger(answer.graph)]+"." : "Сценарий сохранён.");
       }else if(kind==="run"){
         s.dialog.close();await selectRun(answer.id);
-        if(s===session)s.section.querySelector(".studio-editor").scrollIntoView({block:"start"});
       }else if(kind==="template"){
         modal("library",new URLSearchParams({scope:params.scope}));announce("Сценарий опубликован.");
       }else{
@@ -308,23 +393,13 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
       if(s===session){
         if(errorPlace)errorPlace.textContent=error.message;else announce(error.message,true);
         if(kind==="generate"&&errorPlace&&s.dialog.open&&s.dialog.contains(form)){
-          const settings=s.section.querySelector("[data-studio-integrations] details");
-          if(settings?.querySelector("[data-profile-form]")){
-            const link=document.createElement("button");
-            link.type="button";link.className="button";link.textContent="Настроить подключение модели";
-            link.addEventListener("click",()=>{
-              s.pendingPrompt=form.elements.prompt.value;s.dialog.close();
-              settings.closest("[data-studio-integrations]").hidden=false;settings.open=true;
-              settings.scrollIntoView({block:"center"});settings.querySelector("[name=mode]").focus();
-            });
-            errorPlace.append(" ",link);
-          }else errorPlace.append(" Настройки подключения доступны руководителю проекта.");
+          errorPlace.append(" Модель для сборки по описанию настраивает руководитель проекта в узле «Загрузка модели».");
         }
       }
     }
     finally{
       s.busy=false;
-      if(kind==="save"&&session===s){s.saving=false;updateEditorState(s);}
+      if((kind==="save" || kind==="pause")&&session===s){s.saving=false;updateEditorState(s);refreshSchedule(s);}
       if(button){button.disabled=false;button.textContent=buttonLabel;}
       if(kind==="generate")form.removeAttribute("aria-busy");
     }
@@ -332,7 +407,9 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
 
   async function openReport(id){
     leave();const version=generation, project=getProjectId();
-    let discussKey=new URLSearchParams((id||"").split("?")[1]).get("discuss");
+    const params=new URLSearchParams((id||"").split("?")[1]);
+    let discussKey=params.get("discuss");
+    const focusFinding=params.get("repair");
     id=(id||"").split("?")[0];
     page.innerHTML=`<section class="studio"><header class="portal-heading studio-heading"><h1>Отчёт проверки</h1></header>
       <section class="studio-reports" data-shared-report><p>Загружаем отчёт…</p></section></section>`;
@@ -351,6 +428,7 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
         }
         host.innerHTML=reportMarkup(run,e,labels)+`<p><a href="${e(editorHash(run.automationId,run.id))}">Посмотреть схему этого запуска</a></p>`;
         if(["running","pending","queued"].includes(run.status))timer=window.setTimeout(read,1400);
+        else closeRepair=mountRepair(host,{request,project,report:run,canWrite,announce,escape:e,focusFinding});
       }catch(error){
         if(version===generation){
           host.innerHTML=`<p role="alert">${e(error.message)}</p><button type="button" class="button">Повторить загрузку отчёта</button>`;
@@ -366,13 +444,20 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
     const [actionName,query=""]=(detail||"").split("?");
     const sourceParams=new URLSearchParams(query);
     const automationId=sourceParams.get("automationId")||"default";
+    if(actionName==="activity"){
+      page.setAttribute("aria-busy","false");
+      closeActivity=mountActivity(page,{request,url:endpoint(project,"/activity"),escape:e,editorLink:editorHash,back:editorHash(automationId)});
+      return;
+    }
     page.setAttribute("aria-busy","true");page.innerHTML='<p class="empty">Открываем сценарий…</p>';
     try{
-      const state=await request(endpoint(project)+"&templates=0&automationId="+encodeURIComponent(automationId));if(version!==generation)return;
+      const overviewUrl=endpoint(project)+"&templates=0&automationId="+encodeURIComponent(automationId);
+      const state=await request(overviewUrl);if(version!==generation)return;
       const draftKey=JSON.stringify([project,automationId]);
-      const s={project,repositories:state.boundRepositories||[],legacyBoundId:state.legacyBoundId,
+      const s={project,overviewUrl,repositories:state.boundRepositories||[],legacyBoundId:state.legacyBoundId,
         automationId,draftKey,graph:structuredClone(drafts.get(draftKey)||state.graph),
-        scheduleHeld:Boolean(state.scheduleHeld),activeEvent:state.activeEvent,runs:state.runs||[],read:0,changed:drafts.has(draftKey)};
+        savedSettings:triggerSettings(state.graph),scheduleTime:state.scheduleTime,activeSchedule:state.activeSchedule,
+        savedDraft:state.draft,scheduleRefreshRevision:0,activeEvent:state.activeEvent,runs:state.runs||[],read:0,changed:drafts.has(draftKey)};
       const writable=canWrite();
       const choices=state.automations||[{id:"default",name:"Сценарий проекта"}];
       page.innerHTML=`<section class="studio automation-screen" aria-labelledby="studio-title">
@@ -382,16 +467,16 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
               ${choices.map(a=>`<option value="${e(a.id)}" ${a.id===automationId?"selected":""}>${e(a.name)}</option>`).join("")}
             </select></label>${writable?`<button type="button" class="button automation-create" data-modal="create" aria-label="Новый сценарий" title="Новый сценарий">${icon("add")}<span>Создать</span></button>`:""}</div>
           <div class="automation-header-actions"><small data-draft-label aria-live="polite"></small>
+            <a class="button" href="#scenarios/activity?automationId=${e(encodeURIComponent(automationId))}" data-activity-link>Активные сценарии</a>
             ${writable?`<button type="button" class="button automation-save" data-edit-only data-save-graph aria-label="Сохранить сценарий" title="Сохранить сценарий">${icon("save")}<span>Сохранить</span></button>`:""}
             <details class="automation-menu" data-actions><summary aria-label="Действия со сценарием" title="Действия со сценарием">${icon("menu")}</summary>
               <div class="automation-menu-items">${writable?'<button type="button" data-edit-only data-modal="generate">Собрать по описанию</button>':""}
                 <button type="button" data-modal="library">Библиотека сценариев</button>
-                <button type="button" data-integrations>Модель и интеграции</button>
               </div></details></div>
         </header>
         <p data-source-warning class="automation-warning" hidden>Репозиторий сценария отключён. Откройте шаг «Репозиторий» и выберите другой источник.</p>
-        <div class="automation-warning" data-library-schedule hidden>Расписание копии приостановлено. Проверьте время и репозиторий.
-          ${writable?'<button type="button" class="button" data-enable-schedule>Сохранить и включить расписание</button>':""}</div>
+        <div class="automation-trigger-line" hidden><small data-trigger-state role="status"></small>
+          ${writable?'<button type="button" class="link-button" data-trigger-pause hidden>На паузу</button>':""}</div>
         <section class="studio-editor automation-stage" aria-label="Редактор сценария">
           <div class="studio-scroller" tabindex="0" aria-label="Холст сценария"><div class="studio-sheet"><div class="studio-plane"></div></div></div>
           <div class="automation-top-tools">${writable?`<button class="automation-add" type="button" data-edit-only data-picker aria-controls="automation-catalog" aria-expanded="false" title="Добавить шаг">${icon("add")}<span>Добавить шаг</span></button>`:""}
@@ -405,7 +490,8 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
               <button type="button" data-studio-fit aria-label="Вписать граф в экран" title="Вписать граф в экран">100 %</button>
               <button type="button" aria-label="Увеличить" data-zoom="0.1">+</button>
             </div>
-            ${writable?`<button class="automation-run" type="button" data-edit-only data-modal="run">${icon("run")} Запустить проверку</button>`:""}
+            ${writable?`<button class="automation-run" type="button" data-edit-only data-modal="run">${icon("run")} Запустить проверку</button>
+              <button class="automation-run" type="button" data-trigger-enable hidden>Включить сценарий</button>`:""}
             <button type="button" class="automation-history" data-show-history aria-label="История запусков" aria-controls="automation-log" aria-expanded="false">${icon("history")}<span>История</span></button>
           </div>
           ${writable?`<aside id="automation-catalog" class="automation-drawer" data-node-catalog aria-labelledby="catalog-title" hidden>
@@ -418,47 +504,39 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
             <button type="button" class="automation-inspector-close" data-close-drawer aria-label="Закрыть параметры">${icon("close")}</button>
             <div class="studio-inspector"></div></aside>
         </section>
-        <div data-studio-integrations hidden></div>
         <details id="automation-log" class="studio-reports automation-log" data-run-log><summary>${icon("history")} История и результаты запусков</summary>
           <label class="field">Запуск<select data-history></select></label>
           <div data-report>${s.runs.length?"Выберите проверку из истории.":"Здесь появится отчёт первого запуска."}</div></details>
         <dialog class="studio-dialog" aria-labelledby="studio-dialog-title"></dialog></section>`;
       s.section=page.firstElementChild;s.dialog=s.section.querySelector("dialog");session=s;
       bindReportActions(s.section.querySelector("[data-report]"),project,()=>s.report,announce,request);
-      mountIntegrations(s.section.querySelector("[data-studio-integrations]"),{request,project:s.project,overview:state,canWrite:canWrite()});
+      const modelConnections=state.modelConnections || [];
       canvas=createCanvas({section:s.section,getGraph:()=>s.snapshot?s.report.graph:s.graph,getReport:()=>s.snapshot?s.report:null,repositories:s.repositories,legacyBoundId:s.legacyBoundId,
-        modelConnections:state.modelConnections || [],manageModels:state.canManageIntegrations,
+        modelConnections,manageModels:state.canManageIntegrations,
+        onManageModels:(connection,selectConnection)=>openModelConnection(s.section,{request,url:endpoint(s.project),connection,connections:modelConnections,
+          onSaved:name=>{
+            if(s!==session)return;
+            selectConnection(name);
+          }}),
         canWrite:()=>!s.snapshot&&canWrite(),escape:e,onChange:mark,announce,getAddOrigin:()=>s.addOrigin,
-        onAddRequest:origin=>openCatalog(s,origin),onInspect:()=>openInspector(s)});
-      canvas.draw();mode(false,false);showRunOrder();
+        onAddRequest:(origin,position,opener)=>openCatalog(s,origin,position,opener),onInspect:()=>openInspector(s)});
+      canvas.draw();mode(false,false);showRunOrder();refreshSchedule(s);
       s.section.addEventListener("click",event=>{
         const menu=s.section.querySelector("[data-actions]");
         if(!menu.contains(event.target)||event.target.closest("button"))menu.open=false;
         const b=event.target.closest("button");if(!b)return;
-        if(b.hasAttribute("data-new-model")){
-          const select=s.section.querySelector('[data-param="connection"]');
-          modelDialog(s.section,request,endpoint(s.project),name=>{
-            if(!state.modelConnections.includes(name))state.modelConnections.push(name);
-            if(![...select.options].some(option=>option.value===name))select.add(new Option(name,name));
-            select.value=name;select.dispatchEvent(new Event("change",{bubbles:true}));
-          });
-          return;
-        }
         if(b.hasAttribute("data-trace-mode")){mode(!s.snapshot);return;}
         if(b.hasAttribute("data-picker")){openCatalog(s);return;}
         if(b.hasAttribute("data-close-drawer")){closeDrawer(s,true);return;}
         if(b.hasAttribute("data-picker-type")){
-          const origin=s.addOrigin;closeDrawer(s);
-          canvas.addNode(b.dataset.pickerType,origin);return;
+          const {addOrigin,addPosition}=s;closeDrawer(s);
+          canvas.addNode(b.dataset.pickerType,addOrigin,addPosition);return;
         }
         if(b.hasAttribute("data-show-history")){openHistory(s);s.section.querySelector("[data-history]").focus({preventScroll:true});return;}
-        if(b.hasAttribute("data-integrations")){
-          const host=s.section.querySelector("[data-studio-integrations]");
-          host.hidden=false;host.querySelector("details").open=true;host.scrollIntoView({block:"start"});host.querySelector("summary").focus({preventScroll:true});return;
-        }
         if(b.hasAttribute("data-modal")&&(canWrite()||b.dataset.modal==="library"))modal(b.dataset.modal);
         if(b.hasAttribute("data-save-graph"))action("save");
-        if(b.hasAttribute("data-enable-schedule"))action("save",null,true);
+        if(b.hasAttribute("data-trigger-enable"))action("save",null,true);
+        if(b.hasAttribute("data-trigger-pause"))action("pause");
         if(b.hasAttribute("data-close"))s.dialog.close();
         if(b.hasAttribute("data-read-run"))selectRun(b.dataset.readRun);
       });
@@ -478,7 +556,7 @@ export function createStudio({page,request,getProjectId,hasRepositorySettings,ca
       });
       s.section.querySelector("[data-run-log]").addEventListener("toggle",event=>{
         s.section.querySelector("[data-show-history]").setAttribute("aria-expanded",String(event.target.open));
-        if(event.target.open)openHistory(s,false);
+        if(event.target.open)openHistory(s);
         else s.section.querySelector("[data-show-history]").focus({preventScroll:true});
       });
       s.dialog.addEventListener("keydown",ev=>{

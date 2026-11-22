@@ -1,6 +1,6 @@
 import {repositoryName} from "/source_picker.js";
 import {connectionsOf, pendingsOf, openRepositorySetup} from "/repository_setup.js";
-import {projectRoute, projectTabs} from "/project_hub.js";
+import {projectRoute, projectTabs, severityLabels} from "/project_hub.js";
 
 export function createProjectScreens({page, request, getProjectId, announce, escape, canWrite}) {
   let revision = 0;
@@ -13,7 +13,7 @@ export function createProjectScreens({page, request, getProjectId, announce, esc
   let offset = 0;
   let repositoryData;
   let wizard;
-  const filters = {open:"Открытые", new:"Новые", mine:"Мои", high:"Высокая важность", review:"Пора пересмотреть", fixed:"Исправленные", all:"Все"};
+  const filters = {open:"Открытые", new:"Новые", mine:"Мои", high:"Высокие и критические", review:"Пора пересмотреть", fixed:"Исправленные", all:"Все"};
   const decisions = {open:"На рассмотрении", accepted:"Риск принят", false_positive:"Ложное срабатывание"};
   const dates = new Intl.DateTimeFormat("ru", {dateStyle:"short",timeStyle:"short"});
   const when = value => value ? escape(dates.format(new Date(value))) : "—";
@@ -36,7 +36,7 @@ export function createProjectScreens({page, request, getProjectId, announce, esc
     return url.href;
   }
   const issueLocation = issue => escape(issue.file) + (issue.line ? ":" + escape(issue.line) : "");
-  const issueSummary = issue => `<strong>${escape(issue.title)}</strong><small>${escape(issue.ruleId)} · ${issueLocation(issue)} · ${issue.level === "high" ? "Высокая" : "Средняя"} · ${escape(issue.assignee || "Без ответственного")}</small>`;
+  const issueSummary = issue => `<strong>${escape(issue.title)}</strong><small>${escape(issue.ruleId)} · ${issueLocation(issue)} · ${escape(severityLabels[issue.level] || "Не определена")} · ${escape(issue.assignee || "Без ответственного")}</small>`;
   function overview() {
     const destinations = [
       ["#projects", "К проектам", '<path d="M3 8V5h6l2 3h10v11H3z"/>'],
@@ -97,7 +97,7 @@ export function createProjectScreens({page, request, getProjectId, announce, esc
     const manage = form(`<div class="portal-actions"><button class="button primary" name="action" value="test">Пробная проверка</button>
       <button class="button" name="action" value="disconnect">Отключить</button></div>`);
     const start = "#scenarios/run?" + new URLSearchParams({repository:c.repository, binding:"@bound:" + c.bindingId});
-    const links = actions((canWrite() ? link(start, "Проверить по сценарию", true) : "") + link(projectRoute("issues","",{repository:c.repository}),"Замечания репозитория") +
+    const links = actions((canWrite() ? link(start, "Ручная проверка", true) : "") + link(projectRoute("issues","",{repository:c.repository}),"Замечания репозитория") +
       link(projectRoute("releases","",{repository:c.repository}),"Сравнить релизы"));
     return `<article class="portal-tile repo-card" data-repo-card="${escape(c.repository)}"><h2>${escape(c.repository)}</h2>
       ${links}${scope}${canManage ? clear + edit + manage : ""}</article>`;

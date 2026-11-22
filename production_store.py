@@ -29,7 +29,7 @@ RUN_SUMMARY = """
         'findingCount', jsonb_array_length(coalesce(report->'findings', '[]'::jsonb)),
         'highCount', (
             SELECT count(*) FROM jsonb_array_elements(coalesce(report->'findings', '[]'::jsonb)) AS finding
-            WHERE finding->>'level' = 'high'
+            WHERE finding->>'level' IN ('high','critical')
         )
     ) AS summary,
     jsonb_path_query_array(report, '$.coverage[*] ? (@.status == "error")') AS coverage,
@@ -290,7 +290,7 @@ class PostgresStore:
                 )
                 SELECT day, status, count(*) AS runs, sum(jsonb_array_length(findings)) AS findings,
                     sum(jsonb_array_length(
-                        jsonb_path_query_array(findings, '$[*] ? (@.level == "high")')
+                        jsonb_path_query_array(findings, '$[*] ? (@.level == "high" || @.level == "critical")')
                     )) AS high
                 FROM period GROUP BY day, status
                 """,

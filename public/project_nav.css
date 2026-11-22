@@ -2,6 +2,7 @@
 .project-nav-row .project-tabs { flex:1 1 auto; border:0; }
 .project-picker { margin-inline-start:auto; max-width:100%; }
 .project-picker select { width:clamp(10rem,19vw,18rem); max-width:100%; min-height:32px; padding:4px 8px; border:1px solid var(--line-strong); border-radius:8px; color:var(--charcoal); background:var(--surface); font:inherit; font-size:14px; }
+.project-picker selectedcontent { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @media(max-width:650px) {
   .project-nav-row { align-items:start; flex-wrap:nowrap; gap:6px; }
   .project-nav-row .project-tabs { flex:1 1 0; min-width:0; gap:2px; }

@@ -1,8 +1,18 @@
 import {nodeResult} from "/studio_node_result.js";
+import {stageStatus} from "/studio_report.js";
 import {customDefaults,customFields,exportDefinition,importDefinition,changeStep} from "/studio_custom.js";
 import {inputPorts, outputPorts, portNames as portName, portTypes, typeNames, triggerTypes} from "/studio_ports.js";
 
 export const labels = {
+  dependency_review:"Зависимости PR",
+  github_actions:"GitHub Actions",
+  dockerfile:"Dockerfile",
+  java_review:"Ревью Java",
+  spring_review:"Безопасность Spring и JVM",
+  spring_routes:"Маршруты Spring",
+  package_review:"Зависимости npm и PyPI",
+  literal_review:"Текстовое правило",
+  model_load:"Загрузка модели",
   "ai_review": "ИИ-обзор · эксперимент",
   "manual": "Ручной запуск",
   "schedule": "Расписание",
@@ -27,15 +37,31 @@ export function localTimezone(){return Intl.DateTimeFormat().resolvedOptions().t
 const TILE = 72;
 const HALF = TILE / 2;
 const trigger = type => triggerTypes.includes(type);
-const expanded = node => ["source","condition","regex","custom"].includes(node.type);
+const expanded = node => ["source","condition","regex","custom","model_load","explain","ai_review"].includes(node.type);
 const width = node => expanded(node) ? 178 : TILE;
-const height = node => expanded(node) ? 52 + 26 * Math.max(inputPorts(node.type).length,outputPorts(node.type).length) : TILE;
+const extraHeaderHeight = node => node.type === "model_load" ? 17 : 0;
+const height = node => expanded(node)
+  ? 52 + extraHeaderHeight(node) + 26 * Math.max(inputPorts(node.type).length,outputPorts(node.type).length)
+  : TILE;
 // Unscaled bounds include the 166px caption, socket hit areas, "+" and status badge.
 function bounds(node, x = node.x, y = node.y) {
   return {left:x - (expanded(node) ? 12 : 47), right:x + width(node) + (expanded(node) ? 40 : 47),
     top:y - 14, bottom:y + height(node) + (expanded(node) ? 0 : 64)};
 }
 const COLUMN_GAP = 48, ROW_GAP = 34;
+const SOCKET = "[data-studio-port],[data-studio-input]";
+
+function socketRef(element) {
+  const {studioInput,inputKey,origin,studioPort} = element.dataset;
+  return studioInput ? {id:studioInput,port:inputKey,side:"input"} : {id:origin,port:studioPort,side:"output"};
+}
+
+function defaults(type) {
+  if (type === "condition") return {field:"count",op:"gte",value:1};
+  if (type === "regex") return {pattern:"\\.py$",values:[]};
+  if (type === "schedule") return {time:"14:00",timezone:localTimezone()};
+  return type === "custom" ? customDefaults() : {};
+}
 
 function templatePositions(nodes) {
   const original = {manual:[40,160],schedule:[40,160],source:[240,160],secrets:[440,30],sca:[440,160],
@@ -62,27 +88,52 @@ function templatePositions(nodes) {
   return new Map(nodes.map(n => [n.id,{x:cols.get(n.x),y:rows.get(n.y)}]));
 }
 const portY = (node,port,input = false) => expanded(node)
-  ? 54 + 26 * (input ? inputPorts : outputPorts)(node.type).indexOf(port) : HALF;
+  ? 54 + extraHeaderHeight(node) + 26 * (input ? inputPorts : outputPorts)(node.type).indexOf(port) : HALF;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const subtitles = {manual:"По кнопке", github_pr:"Обновление PR", github_push:"Обновление ветки", webhook:"Команда CI/CD", source:"Снимок файлов", secrets:"Текстовые файлы", sca:"Gradle / Maven",
+  dependency_review:"Изменения в PR", github_actions:"Права и версии", dockerfile:"Пользователь образа", java_review:"Качество кода",
+  spring_review:"Настройки и вызовы", package_review:"Файлы зависимостей", literal_review:"Поиск по строкам",
+  spring_routes:"Обработчики и доступ",
   ai_review:"Статические признаки кода",
   sast:"По типу файла", regex:"Регулярное выражение", condition:"Если / иначе", explain:"Рекомендации", verify:"Доказательства", notify:"Почта"};
 const hints = {manual:"Запускает проверку по кнопке.", schedule:"Запускает сохранённый сценарий в выбранные дни по местному времени указанного часового пояса.",
-  github_pr:"Выберите репозиторий в следующем блоке и сохраните схему. Открытие, повторное открытие, смена базовой ветки или обновление PR внутри репозитория запустит проверку коммита из PR.",
-  github_push:"Выберите репозиторий в следующем блоке и сохраните схему. Каждый push в ветку запустит проверку полученного коммита.",
-  webhook:"Сохраните схему и отправьте команду из CI с ключом проекта, идентификатором сценария, репозиторием и SHA коммита.",
+  dependency_review:"Сравнивает прямые зависимости Gradle и Maven между общей базой веток и проверяемым коммитом. Выберите триггер Pull request или передайте baseRevision и revision через HTTP-вебхук.",
+  github_actions:"Читает YAML GitHub Actions. Отмечает избыточные разрешения токена и внешние действия без фиксированного коммита.",
+  dockerfile:"Определяет пользователя финального этапа сборки Docker. Если пользователь зависит от внешнего образа или аргумента сборки, указывает ограничение проверки.",
+  java_review:"Ищет в Java повторяющиеся условия, длинные методы и конструкции для проверки производительности. Влияние на скорость подтвердите измерением на своих данных.",
+  github_pr:"Выберите репозиторий в следующем блоке и включите сценарий. Открытие, повторное открытие, смена базовой ветки или обновление PR внутри репозитория запустит проверку коммита из PR.",
+  github_push:"Выберите репозиторий в следующем блоке и включите сценарий. Каждый push в ветку запустит проверку полученного коммита.",
+  webhook:"Включите сценарий и отправьте команду из CI с ключом проекта, идентификатором сценария, репозиторием и SHA коммита.",
+  model_load:"Соедините «Далее» репозитория со входом «Поток» этого шага, а выход «Модель» со входом «Модель» шага ИИ. На шаг ИИ также подайте его обычный поток данных.",
   ai_review:"Ищет подавленные исключения и изменяемые аргументы по умолчанию. Модель предлагает, что перепроверить.",
   custom:"Применяет ваши операции к списку сверху вниз. На выходах доступны оставшиеся строки, их число и признак непустого результата. Определение можно скачать и загрузить в другой сценарий.",
   json_keys:"Сравнивает декодированные имена ключей отдельно в каждом JSON-объекте. Возвращает строку и столбец повтора. Одинаковые имена в разных объектах допустимы.",
   source:"Принимает снимок репозитория, папку или архив проекта.", secrets:"Ищет признаки встроенных учётных данных в тексте.",
-  sca:"Сверяет прямые зависимости Gradle и Maven со справочником.", sast:"Применяет правила к Python, JSON, Kotlin и конфигурации Spring.",
+  sca:"Сверяет зависимости Maven, Gradle и записи Gradle lockfile со справочником.", sast:"Проверяет Python, JSON, Kotlin, JavaScript, TypeScript и настройки Spring.",
+  spring_review:"Проверяет выдачу трассировок, отключение CSRF, слабые хеши и прямую передачу параметра Spring-маршрута в строку JPA-запроса.",
+  spring_routes:"Перечисляет объявленные в Kotlin маршруты и обработчики Spring. Показывает явную аннотацию доступа метода или неизвестный статус.",
+  package_review:"Сверяет package-lock.json и точные версии из requirements.txt со справочником npm и PyPI.",
+  literal_review:"Ищет заданный текст в строках файлов. В находке сохраняются путь и координаты.",
   regex:"Ищет совпадения в каждой строке. Соедините выход с подходящим входом другого блока.",
   condition:"Выбирает ветку для всего набора найденных замечаний.", explain:"Группирует находки и готовит рекомендации по исправлению.",
   verify:"Сверяет заявленный моделью тип риска, число находок и координаты со снимком запуска.", notify:"Отправляет сводку через выбранный канал проекта."};
+const recipientHints = {
+  smtp:"Руководитель выбирает адрес для автоматических запусков через <a href=\"#projects\">Проекты → Участники</a> → «Получатель SMTP». При ручном запуске письмо приходит на подтверждённую почту инициатора. Общий адрес, назначенный оператором, имеет приоритет.",
+  webhook:"Отправляет сводку и ссылку на отчёт на HTTPS-адрес, который оператор назначил проекту. Ключ CI/CD нужен для отдельного начального шага «HTTP-вебхук», который принимает команду запуска."
+};
 const symbols = {
+  github_actions:'<circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="12" r="2.5"/><circle cx="5" cy="18" r="2.5"/><path d="M7.5 6h3l4 6h2m-9 6h3l4-6"/>',
+  dependency_review:'<circle cx="5" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><path d="M5 7v10m6-7 3 3 6-7"/>',
+  dockerfile:'<path d="m12 2 9 5v10l-9 5-9-5V7Zm-9 5 9 5 9-5m-9 5v10"/>',
+  spring_review:'<path d="M12 3 5 6v5c0 4 3 7 7 10 4-3 7-6 7-10V6zM9 12l2 2 4-4"/>',
+  spring_routes:'<circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M6 7v3l6 4 6-4V7m-6 7v3"/>',
+  package_review:'<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9zm-8 4.5 8 4.6 8-4.6M12 12v9"/>',
+  literal_review:'<path d="M4 7h13M4 12h8M4 17h6m7-1 4 4"/><circle cx="16" cy="13" r="3"/>',
+  java_review:'<path d="M4 10h12v4a6 6 0 0 1-12 0Zm12 1h2a2 2 0 0 1 0 4h-2M3 21h15M7 7c3-2-2-2 1-5m4 5c3-2-2-2 1-5"/>',
   github_pr:'<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/><path d="M6 7v10m12 0v-5a6 6 0 0 0-6-6h-1m3-3-3 3 3 3"/>',
   github_push:'<path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/>',
   webhook:'<path d="m8 9 4 6m5-6-4 6M8 18h8"/><circle cx="12" cy="5" r="3"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="3"/>',
+  model_load:'<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 3v3m6-3v3M9 18v3m6-3v3M3 9h3m-3 6h3m12-6h3m-3 6h3"/><path d="m10 12 1.5 1.5L14 11"/>',
   ai_review:'<path d="M9 3h6m-5 0v6l-6 10a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2L14 9V3m-6 12h8"/>',
   manual:'<path d="M8 4.5 20 12 8 19.5z"/>', schedule:'<circle cx="12" cy="12" r="8.3"/><path d="M12 7v5l3.4 1.8"/>',
   source:'<path d="M3.5 6.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="m10 10.5-2.5 2.3 2.5 2.3m4-4.6 2.5 2.3-2.5 2.3"/>',
@@ -105,7 +156,7 @@ const curve = (x, y, endX, endY) => {
 
 export function createCanvas({section, getGraph, getReport = () => null, repositories = [], legacyBoundId,
     canWrite, escape:e, onChange, announce, onAddRequest, modelConnections = [], manageModels = false,
-    getAddOrigin = () => null, onInspect = () => {}}) {
+    getAddOrigin = () => null, onInspect = () => {}, onManageModels}) {
   const scroller = section.querySelector(".studio-scroller");
   const plane = section.querySelector(".studio-plane");
   const panel = section.querySelector(".studio-inspector");
@@ -203,8 +254,9 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
       const d = curve(a.x + width(a) + 5, a.y + portY(a, edge.port), b.x - 9, b.y + portY(b, edge.input || "in", true));
       const active = sent(run?.trace?.outputs?.[a.id],edge.port);
       const label = edgeTitle(edge);
+      const wireClass = {false:"otherwise",model:"model-link"}[edge.port] || "";
       return `<g class="studio-edge ${active ? "taken" : ""} ${selectedEdge === i ? "selected-edge" : ""}" data-inspect-edge="${i}" tabindex="0" role="button" aria-label="${e(label)}">
-        <path class="studio-hit" d="${d}"/><path class="studio-wire ${edge.port === "false" ? "otherwise" : ""}" d="${d}" marker-end="url(#studio-arrow-${active ? "used" : "normal"})"/></g>`;
+        <path class="studio-hit" d="${d}"/><path class="studio-wire ${wireClass}" d="${d}" marker-end="url(#studio-arrow-${active ? "used" : "normal"})"/></g>`;
     });
     const svg = plane.querySelector(".canvas-wires"), focused = document.activeElement?.dataset?.inspectEdge;
     svg.innerHTML = `<defs>${markup.join("")}</defs>${paths.join("")}<path class="canvas-preview" fill="none"/>`;
@@ -213,8 +265,17 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
   function subtitle(n) {
     if (n.type === "custom") return "Операций · " + n.params.steps.length;
     if (n.type === "json_keys") return "Объекты JSON";
-    if (n.type === "schedule") return (n.params.time || "00:00") + " " + (n.params.timezone || "UTC").split("/").pop();
-    return n.type === "notify" && n.params.channel === "telegram" ? "Telegram" : subtitles[n.type];
+    if (n.type === "schedule") return (Object.hasOwn(n.params,"cron")?"Cron":n.params.time || "00:00") + " " + (n.params.timezone || "UTC").split("/").pop();
+    if (n.type === "notify") return {telegram:"Telegram",webhook:"HTTP-вебхук"}[n.params.channel] || subtitles[n.type];
+    if (n.type === "model_load") return [n.params.connection,n.params.model].filter(Boolean).join(" · ") || "Модель проекта";
+    return subtitles[n.type];
+  }
+  function refreshSubtitle(n) {
+    const body = plane.querySelector(`[data-studio-node="${CSS.escape(n.id)}"]`);
+    if (!body) return;
+    body.querySelector("small").textContent = subtitle(n);
+    body.title = title(n.id) + " · " + subtitle(n);
+    if (n.type === "model_load") body.setAttribute("aria-label", title(n.id) + " · " + subtitle(n) + ", " + n.id);
   }
   function portMarkup(n, port, input = false) {
     const label = e(`${input ? "Вход" : "Выход"} «${portName[port]}» · ${typeNames[portTypes[port]]} · ${title(n.id)}`);
@@ -227,7 +288,7 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
     const socket = `data-socket-type="${portTypes[port]}" data-socket-key="${port}"`;
     if (input) return `<div class="canvas-inlet" ${socket}>${anchor}${caption}</div>`;
     const used = graph().edges.some(edge => edge.from === n.id && edge.port === port);
-    const add = canWrite() && onAddRequest && allowedTypes({from:n.id,port}).length ? `<button type="button" class="canvas-next" data-add-after="${e(n.id)}" data-after-port="${port}" aria-label="Добавить шаг после «${e(title(n.id))}», ${portName[port]}">+</button>` : "";
+    const add = canWrite() && onAddRequest && allowedTypes({id:n.id,port,side:"output"}).length ? `<button type="button" class="canvas-next" data-add-after="${e(n.id)}" data-after-port="${port}" aria-label="Добавить шаг после «${e(title(n.id))}», ${portName[port]}">+</button>` : "";
     return `<div class="canvas-outlet ${used ? "has-edge" : "open"}" data-port="${port}" ${socket}>${anchor}${caption}${add}</div>`;
   }
   function draw(animate = false) {
@@ -243,7 +304,7 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
       const id = e(n.id), name = e(title(n.id)), chosen = n.id === selected;
       const inlet = inputPorts(n.type).map(p => portMarkup(n,p,true)).join("");
       return `<div class="studio-node ${expanded(n) ? "socket-card" : ""} ${chosen ? "selected" : ""}" data-kind="${n.type}" data-studio-box="${id}">
-        <button type="button" class="studio-node-body" data-studio-node="${id}" aria-pressed="${chosen}" title="${name} · ${e(subtitle(n))}" aria-label="${name}, ${id}">
+        <button type="button" class="studio-node-body" data-studio-node="${id}" aria-pressed="${chosen}" title="${name} · ${e(subtitle(n))}" aria-label="${name}${n.type === "model_load" ? " · " + e(subtitle(n)) : ""}, ${id}">
           <span class="canvas-node-icon">${nodeIcon(n.type)}</span><span class="canvas-node-caption"><strong>${name}</strong><small>${e(subtitle(n))}</small></span>
         </button>${inlet}${outputPorts(n.type).map(p => portMarkup(n,p)).join("")}</div>`;
     }).join("");
@@ -283,8 +344,20 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
     const n=nodeById(selected);
     if(!n){panel.innerHTML="<h2>Параметры блока</h2><p>Добавьте блок в сценарий.</p>";return;}
     const params=n.params, disabled=canWrite()?"":"disabled";
+    const modelInput = graph().edges.find(edge => edge.to === n.id && edge.input === "model");
+    function modelSource() {
+      const provider = modelInput && nodeById(modelInput.from);
+      if (provider) return `<p>Модель поступает по связи · ${e(subtitle(provider))}.</p>`;
+      const legacy = [params.connection,params.model].filter(Boolean).join(" · ");
+      return `<p>${legacy ? "Модель из сохранённых параметров · " + e(legacy) + "." : "Используется модель проекта."} Подключите шаг «Загрузка модели», чтобы выбрать другую.</p>`;
+    }
     let fields="";
-    if(n.type==="notify") fields=`<label class="field">Канал<select data-param="channel" ${disabled}>${opts({smtp:"Почта (SMTP)",telegram:"Telegram"},params.channel||"smtp")}</select></label>`;
+    if (n.type==="notify") {
+      const channel=params.channel || "smtp";
+      fields=`<label class="field">Канал<select data-param="channel" ${Object.hasOwn(recipientHints,channel)?'aria-describedby="studio-'+channel+'-recipient"':""} ${disabled}>
+        ${opts({smtp:"Почта (SMTP)",telegram:"Telegram",webhook:"HTTP-вебхук"},channel)}</select></label>
+        ${Object.entries(recipientHints).map(([key,text])=>`<p id="studio-${key}-recipient" data-notice-channel="${key}" ${channel===key?"":"hidden"}>${text}</p>`).join("")}`;
+    }
     if(n.type==="source"){
       const run=getReport(), ref=params.repository||"";
       const key=ref==="@bound"&&legacyBoundId ? "@bound:"+legacyBoundId : ref;
@@ -302,33 +375,50 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
     }
     if(n.type==="schedule"){
       const zones=new Set([params.timezone||"UTC","UTC",localTimezone(),"Europe/Moscow",...(Intl.supportedValuesOf?.("timeZone")||[])]);
-      const period=params.weekdays?"weekly":params.monthDay?"monthly":"daily";
-      fields=`<label class="field">Время запуска<input type="time" data-param="time" value="${e(params.time)}" ${disabled}></label>
+      const period=Object.hasOwn(params,"cron")?"cron":params.weekdays?"weekly":params.monthDay?"monthly":"daily";
+      fields=`${period==="cron"?`<label class="field">Выражение cron<input data-param="cron" maxlength="120" value="${e(params.cron)}" ${disabled}>
+        <small>Минута, час, число месяца, месяц и день недели. Например, 15 9 * * MON,WED,FRI.</small></label>`:
+        `<label class="field">Время запуска<input type="time" data-param="time" value="${e(params.time)}" ${disabled}></label>`}
         <label class="field">Часовой пояс<input list="studio-timezones" data-param="timezone" value="${e(params.timezone||"UTC")}" ${disabled} required></label>
         <datalist id="studio-timezones">${[...zones].sort().map(z=>`<option value="${e(z)}"></option>`).join("")}</datalist>
-        <label class="field">Повторять<select data-period ${disabled}>${opts({daily:"Каждый день",weekly:"По дням недели",monthly:"Ежемесячно"},period)}</select></label>
+        <label class="field">Повторять<select data-period ${disabled}>${opts({daily:"Каждый день",weekly:"По дням недели",monthly:"Ежемесячно",cron:"Выражение cron"},period)}</select></label>
         ${period==="weekly"?`<fieldset class="studio-string-list" ${disabled}><legend>Дни недели</legend>${["Пн","Вт","Ср","Чт","Пт","Сб","Вс"].map((day,i)=>`<label><input type="checkbox" data-weekday="${i+1}" ${params.weekdays.includes(i+1)?"checked":""}> ${day}</label>`).join("")}</fieldset>`:""}
         ${period==="monthly"?`<label class="field">Число месяца<input type="number" data-param="monthDay" min="1" max="31" value="${params.monthDay}" ${disabled}><small>Если такого числа в месяце нет, запуск пропускается.</small></label>`:""}`;
     }
-    if (["sast","sca","secrets","json_keys"].includes(n.type)) {
+    if (["sast","sca","secrets","json_keys","github_actions","dockerfile","dependency_review","java_review","spring_review","spring_routes","package_review","literal_review"].includes(n.type)) {
       fields = `<label class="field">Папка проверки<input data-param="directory" maxlength="250" placeholder="Весь репозиторий" value="${e(params.directory || "")}" ${disabled}>
         <small>Путь от корня проекта, например src/main.</small></label>`;
       if (n.type==="sast") fields += `<label class="field">Проверять файлы<select data-param="language" ${disabled}>
-        ${opts({"":"Все поддерживаемые",kotlin:"Kotlin и настройки Spring (.properties)",python:"Python",json:"JSON"},params.language || "")}</select></label>`;
-      if (n.type==="sca") fields += `<label class="field">Манифесты зависимостей<select data-param="manifest" ${disabled}>
+        ${opts({"":"Все поддерживаемые",kotlin:"Kotlin и настройки Spring (.properties)",python:"Python",javascript:"JavaScript и TypeScript",json:"JSON"},params.language || "")}</select></label>`;
+      if (["sca","dependency_review"].includes(n.type)) fields += `<label class="field">Манифесты зависимостей<select data-param="manifest" ${disabled}>
         ${opts({"":"Gradle и Maven",gradle:"Gradle Kotlin DSL",maven:"Maven"},params.manifest || "")}</select></label>`;
     }
+    if (n.type === "literal_review") fields += `
+      <label class="field">Название правила<input data-param="name" maxlength="100" value="${e(params.name || "")}" ${disabled}></label>
+      <label class="field">Текст для поиска<input data-param="literal" maxlength="500" value="${e(params.literal || "")}" ${disabled}>
+        <small>Текст сохраняется в сценарии. Используйте общедоступные значения.</small></label>
+      <label class="field">Расширение<input data-param="suffix" maxlength="32" value="${e(params.suffix || "")}" placeholder=".properties" ${disabled}></label>
+      <label><input type="checkbox" data-param="caseSensitive" ${params.caseSensitive!==false?"checked":""} ${disabled}> Учитывать регистр</label>
+      <label class="field">Важность<select data-param="severity" ${disabled}>
+        ${opts({low:"Низкая",medium:"Средняя",high:"Высокая",critical:"Критическая"},params.severity || "medium")}</select></label>`;
+    if (n.type==="model_load") {
+      const choices = Object.fromEntries([["","Модель проекта"],...modelConnections.map(name=>[name,name])]);
+      if (params.connection && !Object.hasOwn(choices,params.connection)) {
+        choices[params.connection] = params.connection + " (недоступно)";
+      }
+      fields = `<label class="field">Подключение<select data-param="connection" ${disabled}>${opts(choices,params.connection || "")}</select></label>
+        ${manageModels && !disabled && onManageModels ? '<button type="button" class="button" data-model-settings>Настроить подключения</button>' : ""}
+        <label class="field">ID модели<input data-param="model" maxlength="128" placeholder="Из подключения" value="${e(params.model || "")}" ${disabled}>
+        <small>Заполните, если на выбранном сервере нужна другая модель.</small></label>`;
+    }
     if (n.type==="ai_review") {
-      fields = `<p>Экспериментальная проверка на ваш риск. Поддерживаются Python, JavaScript, TypeScript, Java, Kotlin и C#. Модель получает типы конструкций, отмеченных в снимке. Предложения требуют проверки человеком.</p>
-        <label class="field">Подключение<select data-param="connection" ${disabled}>${opts(Object.fromEntries([["","Модель проекта"],...modelConnections.map(name=>[name,name])]),params.connection || "")}</select></label>
-        ${manageModels && !disabled ? '<button type="button" class="button" data-new-model>Настроить подключение</button>' : ""}
-        <label class="field">ID модели этого шага<input data-param="model" maxlength="128" placeholder="Из подключения" value="${e(params.model || "")}" ${disabled}></label>`;
+      fields = `<p>Поддерживаются Python, JavaScript, TypeScript, Java, Kotlin и C#. Модель получает типы конструкций, отмеченных в снимке. Предложения требуют проверки человеком.</p>${modelSource()}`;
     }
     if (n.type==="explain") {
-      fields = `<label class="field">Пояснения<select data-param="mode" ${disabled}>
-        ${opts({project:"Сервер модели проекта",catalog:"Офлайн-каталог"}, params.mode || "project")}</select></label>`;
-      if (params.mode!=="catalog") fields += `<label class="field">Модель этого шага<input data-param="model" maxlength="128" value="${e(params.model || "")}" placeholder="Модель проекта" ${disabled}>
-        <small>Можно указать ID другой модели на подключённом сервере.</small></label>`;
+      fields = `<label class="field">Пояснения<select data-param="mode" ${disabled || (modelInput ? "disabled" : "")}>
+        ${opts({project:"Модель",catalog:"Офлайн-каталог"}, params.mode || "project")}</select></label>`;
+      if (params.mode!=="catalog") fields += modelSource();
+      if (modelInput && !disabled) fields += "<p>Чтобы выбрать офлайн-каталог, удалите связь со входа «Модель».</p>";
     }
     if (["regex","custom"].includes(n.type)) {
       const connected = graph().edges.some(edge => edge.to === n.id && edge.input === "values");
@@ -344,7 +434,7 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
       const ops=params.field==="path"?{eq:"Равно",regex:"Регулярное выражение"}:params.field==="category"?{eq:"Равно"}:{gte:"Не меньше",eq:"Равно"};
       fields=`<label class="field">Поле<select data-param="field" ${disabled || (wired ? "disabled" : "")}>${opts({count:"Количество",severity:"Важность",path:"Путь файла",category:"Категория находки"},params.field)}</select></label>
       <label class="field">Сравнение<select data-param="op" ${disabled}>${opts(ops,params.op)}</select></label>
-      <label class="field">Значение${params.field==="category"?`<select data-param="value" ${disabled}>${opts({SECRET:"Секрет",SAST:"Статический анализ",SCA:"Зависимость"},params.value)}</select>`:params.field==="severity"?`<select data-param="value" ${disabled}>${opts({LOW:"Низкая",MEDIUM:"Средняя",HIGH:"Высокая",CRITICAL:"Критическая"},String(params.value).toUpperCase())}</select>`:`<input data-param="value" type="${params.field==="count"?"number":"text"}" min="0" maxlength="512" value="${e(params.value)}" ${disabled}>`}</label>`;
+      <label class="field">Значение${params.field==="category"?`<select data-param="value" ${disabled}>${opts({SECRET:"Секрет",SAST:"Статический анализ",SCA:"Зависимость",QUALITY:"Качество кода",PERF:"Производительность"},params.value)}</select>`:params.field==="severity"?`<select data-param="value" ${disabled}>${opts({LOW:"Низкая",MEDIUM:"Средняя",HIGH:"Высокая",CRITICAL:"Критическая"},String(params.value).toUpperCase())}</select>`:`<input data-param="value" type="${params.field==="count"?"number":"text"}" min="0" maxlength="512" value="${e(params.value)}" ${disabled}>`}</label>`;
       if (wired === "found") fields = "<p>Вход «Найдено» выбирает ветку «Да» или «Нет».</p>";
       if (wired === "count") fields = "<p>Число приходит на вход «Количество».</p>" + fields;
     }
@@ -390,24 +480,28 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
     return inputPorts(node.type).find(input => portTypes[input] === portTypes[port]);
   }
   function connectionError(from, to, port, input) {
-    const a = nodeById(from), b = nodeById(to);
+    return edgeError({from:nodeById(from),to:nodeById(to),port,input});
+  }
+  function edgeError({from:a,to:b,port,input}) {
     const error = structuralError(a,b);
     if (error) return error;
     if (!outputPorts(a.type).includes(port)) return "Этот выход недоступен.";
     input ??= compatibleInput(b,port);
     if (!inputPorts(b.type).includes(input) || portTypes[input] !== portTypes[port]) return "Выберите вход того же типа.";
+    if (input === "model" && b.type === "explain" && b.params.mode === "catalog") return "Выберите пояснения с моделью в параметрах блока.";
     const edges = graph().edges;
     if (edges.length >= 128) return "Достигнут предел в 128 связей.";
-    if (edges.some(x => x.from === from && x.to === to && x.port === port && (x.input || "in") === input)) return "Эта связь уже существует.";
-    if (input !== "in" && edges.some(x => x.to === to && x.input === input)) return "К этому входу уже подключён выход. Сначала удалите прежнюю связь.";
+    if (edges.some(x => x.from === a.id && x.to === b.id && x.port === port && (x.input || "in") === input)) return "Эта связь уже существует.";
+    if (input !== "in" && edges.some(x => x.to === b.id && x.input === input)) return "К этому входу уже подключён выход. Сначала удалите прежнюю связь.";
     if (b.type === "condition" && input !== "in") {
-      if (edges.some(x => x.to === to && ["count","found"].includes(x.input))) return "Условие принимает либо число, либо ответ «Да / нет».";
+      if (edges.some(x => x.to === b.id && ["count","found"].includes(x.input))) return "Условие принимает либо число, либо ответ «Да / нет».";
       if (input === "count" && b.params.field !== "count") return "В параметрах условия выберите поле «Количество».";
     }
-    const reachable = [to], visited = new Set();
+    if (!a.id || !b.id) return "";
+    const reachable = [b.id], visited = new Set();
     while (reachable.length) {
       const next = reachable.pop();
-      if (next === from) return "Связь замкнёт цикл.";
+      if (next === a.id) return "Связь замкнёт цикл.";
       if (!visited.has(next)) { visited.add(next); reachable.push(...edges.filter(x => x.from === next).map(x => x.to)); }
     }
     return "";
@@ -419,69 +513,111 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
   }
   function startWire(button) {
     clearWire();
-    wire = {from:button.dataset.origin, port:button.dataset.studioPort};
+    wire = socketRef(button);
     button.classList.add("canvas-origin"); scroller.classList.add("wiring");
-    for (const item of plane.querySelectorAll("[data-studio-input]")) {
-      if (!connectionError(wire.from, item.dataset.studioInput, wire.port, item.dataset.inputKey)) item.classList.add("canvas-target");
+    for (const item of plane.querySelectorAll(SOCKET)) {
+      const socket = socketRef(item);
+      if (socket.side === wire.side) continue;
+      if (!edgeError(edgeFrom(wire,nodeById(socket.id),socket.port))) item.classList.add("canvas-target");
     }
+  }
+  function edgeFrom(origin, other, otherPort) {
+    const fixed = nodeById(origin.id);
+    if (origin.side === "output") return {from:fixed,to:other,port:origin.port,input:otherPort ?? compatibleInput(other,origin.port)};
+    const port = otherPort ?? outputPorts(other.type).find(key => portTypes[key] === portTypes[origin.port]);
+    return {from:other,to:fixed,port,input:origin.port};
+  }
+  function connectWire(target) {
+    const socket = target.matches(SOCKET) ? socketRef(target) : null;
+    if (socket?.side === wire.side) {clearWire(); announce("Соедините выход со входом.",true);return;}
+    const node = nodeById(socket?.id ?? target.dataset.studioNode);
+    const {from,to,port,input} = edgeFrom(wire,node,socket?.port);
+    connect(from.id,to.id,port,input);
+  }
+  function suggest(origin, opener, position) {
+    clearWire();
+    if (allowedTypes(origin).length) onAddRequest?.(origin,position,opener);
+    else announce("Для этого порта нет подходящих шагов.",true);
   }
   function connect(from,to,port,input) {
     if (!canWrite()) return;
     const error = connectionError(from,to,port,input); clearWire();
     if (error) {announce(error,true); return;}
     input ??= compatibleInput(nodeById(to),port);
-    graph().edges.push(input === "in" ? {from,to,port} : {from,to,port,input}); selected = to;
+    addEdge(from,to,port,input); selected = to;
     onChange(); draw(); focusNode(to); announce("Блоки соединены.");
+  }
+  function addEdge(from,to,port,input) {
+    graph().edges.push(input === "in" ? {from,to,port} : {from,to,port,input});
   }
   function allowedTypes(origin) {
     if (!canWrite()) return [];
     const nodes = graph().nodes;
     if (!nodes.length) return triggerTypes;
-    const keys = Object.keys(labels), from = origin && nodeById(origin.from);
-    if (!from) return keys;
-    if (graph().edges.length >= 128 || !outputPorts(from.type).includes(origin.port)) return [];
+    const keys = Object.keys(labels);
+    if (!origin) return keys;
+    const fixed = nodeById(origin.id);
+    const ports = origin.side === "input" ? inputPorts : outputPorts;
+    if (!fixed || !ports(fixed.type).includes(origin.port) || graph().edges.length >= 128) return [];
     return keys.filter(type => {
-      if (trigger(type)) return false;
-      const existing = type === "source" && nodes.find(n => n.type === type);
-      if (existing) return !connectionError(from.id,existing.id,origin.port);
-      return nodes.length < 48 && !structuralError(from,{type}) && compatibleInput({type},origin.port);
+      const existing = singleton(type);
+      if (existing ? existing.type !== type : nodes.length >= 48) return false;
+      return !edgeError(edgeFrom(origin,existing || {type,params:defaults(type)}));
     });
+  }
+  function singleton(type) {
+    if (trigger(type)) return graph().nodes.find(n => trigger(n.type));
+    if (type === "source") return graph().nodes.find(n => n.type === "source");
   }
   function addNode(type, origin = null, position = null) {
     if (!canWrite() || !allowedTypes(origin).includes(type)) return;
-    const current = graph(), from = origin && nodeById(origin.from);
-    const existing = current.nodes.find(n => trigger(type) && trigger(n.type) || type === "source" && n.type === "source");
+    const current = graph(), existing = singleton(type);
+    const fixed = origin && nodeById(origin.id);
     if (existing) {
       if (existing.type !== type) {
-        existing.type = type; existing.params = type === "schedule" ? {time:"14:00",timezone:localTimezone()} : {};
+        existing.type = type; existing.params = defaults(type);
         onChange(); draw();
       }
-      if (from) connect(from.id, existing.id, origin.port);
+      if (origin) {
+        const {from,to,port,input} = edgeFrom(origin,existing);
+        connect(from.id,to.id,port,input);
+      }
       ensureVisible(existing); select(existing.id,true); focusNode(existing.id); return;
     }
     if (current.nodes.length >= 48) {announce("Достигнут предел в 48 блоков.",true);return;}
     let suffix = 1, id = type;
     while (nodeById(id)) id = `${type}-${++suffix}`;
     commitPositions();
-    const size = bounds({type},0,0);
-    let x = position?.x ?? (from ? bounds(from).right + COLUMN_GAP - size.left : (scroller.clientWidth / 2 - left) / scale - width({type}) / 2);
-    let y = position?.y ?? (from ? from.y + portY(from,origin.port) - portY({type},compatibleInput({type},origin.port),true)
-      : (scroller.clientHeight / 2 - top) / scale - height({type}) / 2);
+    const node = {id,type,params:defaults(type)};
+    const edge = fixed && edgeFrom(origin,node);
+    const upstream = origin?.side === "input";
+    const size = bounds(node,0,0);
+    let x, y;
+    if (position) {
+      x = position.x - width(node) / 2;
+      y = position.y - height(node) / 2;
+      autoFit = false;
+    } else if (fixed) {
+      x = upstream ? bounds(fixed).left - COLUMN_GAP - size.right : bounds(fixed).right + COLUMN_GAP - size.left;
+      y = fixed.y + portY(fixed,origin.port,upstream) - portY(node,upstream ? edge.port : edge.input,!upstream);
+    } else {
+      x = (scroller.clientWidth / 2 - left) / scale - width(node) / 2;
+      y = (scroller.clientHeight / 2 - top) / scale - height(node) / 2;
+    }
     if (!position) {
       const sameColumn = current.nodes.map(n => bounds(n)).filter(r => x+size.left < r.right+COLUMN_GAP && r.left < x+size.right+COLUMN_GAP);
       for (const r of sameColumn.sort((a,b) => a.top-b.top)) {
         if (y+size.top < r.bottom+ROW_GAP && r.top < y+size.bottom+ROW_GAP) y = r.bottom+ROW_GAP-size.top;
       }
     }
-    const params = type === "condition" ? {field:"count",op:"gte",value:1} : type === "regex" ? {pattern:"\\.py$",values:[]} : type === "schedule" ? {time:"14:00",timezone:localTimezone()} : {};
-    const node = {id,type,x:clamp(Math.round(x),-100000,100000),y:clamp(Math.round(y),-100000,100000),params:type==="custom"?customDefaults():params};
+    node.x = clamp(Math.round(x),-100000,100000);
+    node.y = clamp(Math.round(y),-100000,100000);
     current.nodes.push(node);
-    if (from) {
-      const input = compatibleInput(node,origin.port);
-      current.edges.push({from:from.id,to:id,port:origin.port,...(input === "in" ? {} : {input})});
-    }
-    selected = id; onChange(); draw(); ensureVisible(node); focusNode(id); inspectNode(node);
-    announce(from ? "Шаг добавлен и соединён." : "Шаг добавлен.");
+    if (edge) addEdge(edge.from.id,edge.to.id,edge.port,edge.input);
+    selected = id; onChange(); draw();
+    if (!position) {ensureVisible(node); inspectNode(node);}
+    focusNode(id);
+    announce(edge ? "Шаг добавлен и соединён." : "Шаг добавлен.");
   }
   function moveNode(n,x,y) {
     commitPositions();
@@ -501,15 +637,19 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
       if (v === "catalog") {n.params.mode = v; delete n.params.model;}
       else delete n.params.mode;
       inspect();
-    } else if (["repository","language","manifest","directory","model","connection"].includes(k)) {
+    } else if (k === "caseSensitive") {
+      n.params[k] = el.checked;
+    } else if (["repository","language","manifest","directory","model","connection","suffix"].includes(k)) {
       if (v.trim()) n.params[k] = v.trim();
       else delete n.params[k];
     }
     else n.params[k] = k==="monthDay" || k === "value" && n.params.field === "count" && v !== "" ? Number(v) : v;
     onChange();
-    if (n.type === "schedule" || n.type === "notify") {
-      const body = plane.querySelector(`[data-studio-node="${CSS.escape(n.id)}"]`);
-      body.querySelector("small").textContent = subtitle(n); body.title = title(n.id) + " · " + subtitle(n);
+    if (["schedule","notify","model_load"].includes(n.type)) refreshSubtitle(n);
+    if (k === "channel") {
+      for (const hint of panel.querySelectorAll("[data-notice-channel]")) hint.hidden=hint.dataset.noticeChannel!==v;
+      if (Object.hasOwn(recipientHints,v)) el.setAttribute("aria-describedby","studio-"+v+"-recipient");
+      else el.removeAttribute("aria-describedby");
     }
     if (k === "repository") inspect();
     if (k === "name") draw();
@@ -521,24 +661,41 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
     if (button?.hasAttribute("data-studio-fit")) {fit();return;}
     if (button?.hasAttribute("data-zoom")) {zoom(Number(button.dataset.zoom) < 0 ? 1 / 1.25 : 1.25);return;}
     if (button?.hasAttribute("data-add-after") && canWrite()) {
-      clearWire(); onAddRequest?.({from:button.dataset.addAfter,port:button.dataset.afterPort}); return;
+      suggest({id:button.dataset.addAfter,port:button.dataset.afterPort,side:"output"},button); return;
     }
-    if (button?.hasAttribute("data-studio-port") && canWrite()) {
-      startWire(button); announce("Выберите вход следующего шага. Escape отменяет связь."); return;
-    }
-    if (button?.hasAttribute("data-studio-input")) {
-      if (wire && canWrite()) connect(wire.from,button.dataset.studioInput,wire.port,button.dataset.inputKey);
-      else select(button.dataset.studioInput,true);
+    if (button?.matches(SOCKET) && canWrite()) {
+      const socket = socketRef(button);
+      if (wire && socket.side !== wire.side) connectWire(button);
+      else {
+        startWire(button);
+        announce(`Выберите ${socket.side === "input" ? "выход" : "вход"}. Клавиша «+» открывает каталог, Escape отменяет связь.`);
+      }
       return;
     }
     if (button?.hasAttribute("data-studio-node")) {
-      if (wire && canWrite()) connect(wire.from,button.dataset.studioNode,wire.port);
+      if (wire && canWrite()) connectWire(button);
       else select(button.dataset.studioNode,true);
       return;
     }
     if (scroller.contains(event.target)) clearWire();
     if (button?.hasAttribute("data-download-node")) {exportDefinition(nodeById(selected).params);return;}
     if (!canWrite()) return;
+    if (button?.hasAttribute("data-model-settings")) {
+      const current = graph(), n = nodeById(selected);
+      if (n?.type !== "model_load" || !manageModels) return;
+      onManageModels?.(n.params.connection || "",name => {
+        if (!canWrite() || graph() !== current || !current.nodes.includes(n)) return;
+        if (name && !modelConnections.includes(name)) modelConnections.push(name);
+        if ((n.params.connection || "") !== name) {
+          if (name) n.params.connection = name;
+          else delete n.params.connection;
+          onChange();
+          refreshSubtitle(n);
+        }
+        if (selected === n.id) inspect();
+      });
+      return;
+    }
     if (button?.matches("[data-new-step],[data-drop-step]")) {
       changeStep(nodeById(selected).params,button);onChange();draw();return;
     }
@@ -576,6 +733,13 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
       const n=nodeById(selected);
       if (el.matches("[data-period]")) {
         delete n.params.monthDay;delete n.params.weekdays;
+        if (el.value === "cron") {
+          n.params.cron = "0 14 * * *";
+          delete n.params.time;
+        } else {
+          if (Object.hasOwn(n.params,"cron")) n.params.time = "14:00";
+          delete n.params.cron;
+        }
         if (el.value==="weekly") n.params.weekdays=[1,2,3,4,5];
         if (el.value==="monthly") n.params.monthDay=1;
         onChange();inspect();return;
@@ -605,7 +769,8 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
   });
   scroller.addEventListener("keydown", event => {
     if (event.key === "Escape" && wire) {
-      const origin = wire.from; clearWire(); focusNode(origin); event.stopPropagation(); return;
+      const origin = plane.querySelector(".canvas-origin");
+      clearWire(); origin?.focus({preventScroll:true}); event.stopPropagation(); return;
     }
     const edge = event.target.closest("[data-inspect-edge]");
     if (edge && (event.key === "Enter" || event.key === " ")) {
@@ -613,6 +778,10 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
     }
     const key = event.key;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const socket = event.target.closest(SOCKET);
+    if (key === "+" && socket && canWrite()) {
+      event.preventDefault(); suggest(socketRef(socket),socket); return;
+    }
     if (["+", "=", "-", "_", "1", "0"].includes(key)) {
       event.preventDefault();
       if (key === "1") fit(); else zoom(key === "0" ? 1 / scale : (key === "-" || key === "_") ? .8 : 1.25);
@@ -647,14 +816,14 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
   scroller.addEventListener("pointerdown", event => {
     if (gesture || ![0,1].includes(event.button)) return;
     suppressClick = false;
-    const target = event.target, port = target.closest("[data-studio-port]"), body = target.closest("[data-studio-node]");
+    const target = event.target, port = target.closest(SOCKET), body = target.closest("[data-studio-node]");
     const pan = event.button === 1 || event.ctrlKey || event.metaKey || !target.closest("button,[data-inspect-edge]");
     const details = {pointer:event.pointerId,x:event.clientX,y:event.clientY,moved:false};
     if (pan) {
       clearWire(); gesture = {...details,mode:"pan",left,top}; scroller.setPointerCapture(event.pointerId);
       scroller.classList.add("panning"); event.preventDefault();
     } else if (port && canWrite()) {
-      startWire(port); gesture = {...details,mode:"wire"}; port.setPointerCapture(event.pointerId);
+      gesture = {...details,mode:"wire",socket:port}; port.setPointerCapture(event.pointerId);
     } else if (body && canWrite() && !wire) {
       const node = nodeById(body.dataset.studioNode);
       gesture = {...details,mode:"node",node,originX:placed(node).x,originY:placed(node).y}; body.setPointerCapture(event.pointerId);
@@ -665,28 +834,35 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
     if (!g || g.pointer !== event.pointerId) return;
     const dx = event.clientX - g.x, dy = event.clientY - g.y;
     if (!g.moved && Math.hypot(dx,dy) < 4) return;
+    if (!g.moved && g.mode === "wire") startWire(g.socket);
     g.moved = true;
     if (g.mode === "pan") {autoFit = false; left = g.left + dx; top = g.top + dy; applyView();}
     if (g.mode === "node" && canWrite()) {autoFit = false; moveNode(g.node,g.originX + dx / scale,g.originY + dy / scale);}
     if (g.mode === "wire" && wire) {
-      const origin = placed(nodeById(wire.from)), end = world(event.clientX,event.clientY);
-      plane.querySelector(".canvas-preview").setAttribute("d",curve(origin.x + width(origin),origin.y + portY(origin,wire.port),end.x,end.y));
+      const origin = placed(nodeById(wire.id)), end = world(event.clientX,event.clientY);
+      const input = wire.side === "input";
+      const x = origin.x + (input ? -9 : width(origin) + 5), y = origin.y + portY(origin,wire.port,input);
+      plane.querySelector(".canvas-preview").setAttribute("d",input ? curve(end.x,end.y,x,y) : curve(x,y,end.x,end.y));
     }
   });
   function finishGesture(event) {
     if (!gesture || gesture.pointer !== event.pointerId) return;
-    const {mode,moved} = gesture; gesture = null; scroller.classList.remove("panning");
+    const {mode,moved,socket} = gesture; gesture = null; scroller.classList.remove("panning");
     if (mode === "node" && moved) onChange();
     if (moved) {suppressClick = true; setTimeout(() => {suppressClick = false;}, 0);}
     if (mode !== "wire") return;
-    if (event.type === "pointercancel" || !wire) {clearWire();return;}
     if (!moved) return;
-    const drop = document.elementFromPoint(event.clientX,event.clientY)?.closest("[data-studio-input], [data-studio-node]");
-    if (drop && plane.contains(drop)) connect(wire.from,drop.dataset.studioInput || drop.dataset.studioNode,wire.port,drop.dataset.inputKey);
-    else clearWire();
+    if (event.type !== "pointerup" || !wire) {clearWire();return;}
+    const hit = document.elementFromPoint(event.clientX,event.clientY);
+    const drop = hit?.closest(`${SOCKET},[data-studio-node]`);
+    if (drop && plane.contains(drop)) connectWire(drop);
+    else if (hit && scroller.contains(hit) && !hit.closest("[data-studio-box],[data-inspect-edge]")) {
+      suggest(wire,socket,world(event.clientX,event.clientY));
+    } else clearWire();
   }
   scroller.addEventListener("pointerup",finishGesture);
   scroller.addEventListener("pointercancel",finishGesture);
+  scroller.addEventListener("lostpointercapture",finishGesture);
   section.addEventListener("dragstart", event => {
     const button = event.target.closest("[data-picker-type],[data-add-type]");
     if (button && canWrite()) event.dataTransfer.setData("application/x-studio-node",button.dataset.pickerType || button.dataset.addType);
@@ -696,8 +872,8 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
   });
   scroller.addEventListener("drop", event => {
     const type = event.dataTransfer.getData("application/x-studio-node"); if (!type || !canWrite()) return;
-    event.preventDefault(); const pos = world(event.clientX,event.clientY);
-    addNode(type,getAddOrigin(),{x:pos.x - HALF,y:pos.y - HALF});
+    event.preventDefault();
+    addNode(type,getAddOrigin(),world(event.clientX,event.clientY));
   });
   const observer = new ResizeObserver(() => {if (autoFit && graphRef) fit(false);});
   observer.observe(scroller);
@@ -717,12 +893,12 @@ export function createCanvas({section, getGraph, getReport = () => null, reposit
         }
       }
     }
-    const byId = new Map((stages || []).map(stage => [stage.id,stage.status]));
+    const byId = new Map((stages || []).map(stage => [stage.id,stageStatus(getReport(), stage)]));
     for (const box of plane.querySelectorAll("[data-studio-box]")) {
       const status = byId.get(box.dataset.studioBox); box.querySelector(".studio-live")?.remove();
       if (!status) continue;
       const badge = document.createElement("span"); badge.className = "studio-live"; badge.dataset.status = status;
-      badge.textContent = ({done:"Готово",running:"В работе",skipped:"Пропущен",error:"Ошибка"})[status] || status;
+      badge.textContent = ({done:"Готово",partial:"Частично",running:"В работе",skipped:"Пропущен",error:"Ошибка"})[status] || status;
       box.append(badge);
     }
   }

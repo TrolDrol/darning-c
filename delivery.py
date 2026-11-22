@@ -23,23 +23,23 @@ class SMTPConfig:
     password: str = field(repr=False)
 
 
-def account_smtp(fallback):
+def account_smtp(fallback, *, recipient=None):
     if os.getenv("BANK_ACCOUNT_SMTP_HOST"):
-        return smtp_config("BANK_ACCOUNT_SMTP")
+        return smtp_config("BANK_ACCOUNT_SMTP", recipient=recipient)
     return fallback
 
 
-def smtp_config(prefix="BANK_SMTP"):
-    host, sender, recipient, user, password, security, port = (
+def smtp_config(prefix="BANK_SMTP", *, recipient=None):
+    host, sender, destination, user, password, security, port = (
         os.getenv(f"{prefix}_{key}", "")
         for key in ("HOST", "FROM", "TO", "USER", "PASSWORD", "SECURITY", "PORT")
     )
-    if prefix == "BANK_ACCOUNT_SMTP":
-        recipient = sender  # Account messages address the verified mailbox individually.
     if host and user:
         password = secret(f"{prefix}_PASSWORD")
-    if not any((host, sender, recipient, user, password, security, port)):
+    if not any((host, sender, destination, user, password, security, port)):
         return None
+    if recipient is None:
+        recipient = sender if prefix == "BANK_ACCOUNT_SMTP" else destination
     security = security or "tls"
     if security not in ("tls", "starttls", "plain"):
         raise ValueError("BANK_SMTP_SECURITY: укажите tls, starttls или plain.")

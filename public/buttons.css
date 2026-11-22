@@ -5,10 +5,10 @@
   --btn-ink: #101c2b;
 }
 :root[data-theme="light"] {
-  --btn-fill: #deedf8;
-  --btn-hover: #cbdfee;
-  --btn-accent: linear-gradient(165deg, #ff8b64 4%, #ffb362 65%, #ffcf68 100%);
-  --btn-ink: #351b12;
+  --btn-fill: var(--raised);
+  --btn-hover: var(--mint);
+  --btn-accent: var(--action);
+  --btn-ink: var(--background);
 }
 :root[data-theme="vi"] {
   --btn-fill: #302e31;

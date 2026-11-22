@@ -27,9 +27,22 @@ class Profile:
     fingerprint: str = ""
     project: str = ""
 
+
+@dataclass(frozen=True)
+class ModelReference:
+    """An invocation-local model selection. Expose only the public port value."""
+
+    connection: str
+    profile: Profile = field(repr=False)
+
+    def public(self):
+        return {"connection": self.connection, "model": self.profile.model}
+
+
 _active = ContextVar("studio_model", default=None)
 _ROUTES = Path("/run/darning-model-routes")
 _ROUTE_ERROR = "Туннель модели проекта недоступен. Попросите оператора проверить SSH-туннель, права на сокет и HTTPS-сервер модели."
+_MODEL_ID = re.compile(r"[\w./:@+-]{1,128}")
 
 def active():
     profile = _active.get()
@@ -39,14 +52,23 @@ def active():
 
 
 @contextmanager
-def for_node(model):
-    """Override only a model identifier on the project's selected transport."""
-    profile = active()
-    token = _active.set(replace(profile, model=model) if model else profile)
+def using_profile(profile):
+    token = _active.set(profile)
     try:
         yield
     finally:
         _active.reset(token)
+
+
+def for_node(model):
+    """Override only a model identifier on the currently selected transport."""
+    profile = active()
+    return using_profile(replace(profile, model=model) if model else profile)
+
+
+def valid_identifier(model):
+    return isinstance(model, str) and bool(_MODEL_ID.fullmatch(model)) and "://" not in model
+
 
 def address(endpoint):
     if not isinstance(endpoint,str) or len(endpoint)>512 or not endpoint.isascii() or any(ord(c)<33 for c in endpoint):
@@ -190,8 +212,10 @@ def record(store,project,connection=None):
                      (project,connection_name(connection))).fetchone()
         return q("SELECT endpoint,model,key_cipher,fingerprint FROM studio_model WHERE project_id=?",(project,)).fetchone()
 
-def view(store,project):
-    r=record(store,project)
+def view(store,project,connection=None):
+    r=record(store,project,connection)
+    if connection is not None and not r:
+        raise WorkspaceError("Выбранное подключение модели отсутствует в проекте.",404)
     return {"custom":bool(r),"endpoint":r["endpoint"] if r else "","model":r["model"] if r else os.getenv("BANK_AI_MODEL",""),
             "hasKey":bool(r and r["key_cipher"]), "fingerprint":r["fingerprint"] if r else ""}
 
@@ -202,10 +226,11 @@ def check(profile):
     from case_intelligence import IntelligenceError, _request
     token=_active.set(profile)
     try:
-        result=_request('Return JSON {"ok":true}.', {"ok":True}, 32,
-                        {"type":"object","properties":{"ok":{"const":True}},"required":["ok"],"additionalProperties":False})
+        result=_request('Return JSON {"ok":true}.', {"ok":True}, 128,
+                        {"type":"object","properties":{"ok":{"const":True}},"required":["ok"],"additionalProperties":False},
+                        retry_transient=True)
         if result.get("ok") is not True:
-            raise IntelligenceError("Модель ответила, но не выполнила проверку JSON. Проверьте режим структурированного вывода.")
+            raise IntelligenceError("Модель вернула JSON, но не подтвердила тестовое значение. Повторите проверку.")
     except IntelligenceError as error:
         raise WorkspaceError(str(error),422) from None
     finally:
@@ -226,7 +251,7 @@ def save(store,project,payload):
     endpoint,model=payload.get("endpoint"),payload.get("model")
     url,_=address(endpoint)
     endpoint=url.geturl()
-    if not isinstance(model,str) or not re.fullmatch(r"[\w./:@+-]{1,128}",model):
+    if not valid_identifier(model):
         raise WorkspaceError("Укажите идентификатор модели.")
     key=payload.get("apiKey")
     if key is not None and (not isinstance(key,str) or len(key)>8192 or any(ord(c)<33 or ord(c)>126 for c in key)):
@@ -265,7 +290,7 @@ def save(store,project,payload):
     return view(store,project)
 
 @contextmanager
-def using(store,project,connection=None):
+def using(store,project,connection=None, *, model=None):
     r=record(store,project,connection)
     if connection is not None and not r:
         raise WorkspaceError("Выбранное подключение модели отсутствует в проекте.")
@@ -273,8 +298,19 @@ def using(store,project,connection=None):
     if r:
         key=crypt(store,project,key_scope(r["endpoint"],r["fingerprint"]),r["key_cipher"],False) if r["key_cipher"] else ""
         profile=Profile(r["endpoint"],r["model"],key,True,r["fingerprint"],project)
-    token=_active.set(profile)
-    try:
-        yield
-    finally:
-        _active.reset(token)
+    with using_profile(profile):
+        if model:
+            with for_node(model):
+                yield
+        else:
+            yield
+
+
+def load_reference(store, project, connection=None, model=None):
+    with using(store, project, connection, model=model):
+        profile = active()
+        if not profile.endpoint or not profile.model:
+            raise WorkspaceError("В узле «Загрузка модели» выберите настроенное подключение.")
+        if not valid_identifier(profile.model):
+            raise WorkspaceError("Проверьте ID модели в выбранном подключении.")
+        return ModelReference(connection or "", profile)

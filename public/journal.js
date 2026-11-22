@@ -117,6 +117,7 @@ export function createJournal({page, request, getProjectId, getSettings, escape:
     filters.category = selectedCategory;
     page.innerHTML = `<section class="journal">${projectTabs("journal",getProjectId())}<header class="portal-heading"><h1>Журнал</h1><div class="page-actions">
       <button class="button" data-j-reload type="button">Обновить</button>
+      <a class="button" href="#scenarios/activity">Активные сценарии</a>
       ${getSettings()?.canWrite === false ? "" : '<a class="button primary" href="#scenarios/run">Запустить проверку</a>'}</div></header>
       <div class="journal-filters"><details class="journal-calendar"><summary>${calendarIcon()} <span data-j-dates></span> <span aria-hidden="true">⌄</span></summary>
         <form class="journal-calendar-form"><label class="field">С даты<input type="date" name="start" min="1970-01-01" max="9999-12-30" required></label>

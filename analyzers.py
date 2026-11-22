@@ -4,7 +4,7 @@ import ast
 import json
 from collections import Counter
 from hashlib import sha256
-from case_unified import RULES as PROJECT_RULES, project_analysis
+from case_unified import RULES as PROJECT_RULES, REVIEW_RULES, project_analysis
 
 
 RULES = {
@@ -40,7 +40,7 @@ RULES = {
     }
 } | PROJECT_RULES
 
-REPORT_RULES = RULES | {"JSON-KEYS": {"engine": "json_keys"}}
+REPORT_RULES = RULES | REVIEW_RULES | {"JSON-KEYS": {"engine": "json_keys"}}
 class JsonFields:
     """Retain exact value positions after validating a JSON document."""
 
@@ -182,8 +182,9 @@ class PythonPolicy(ast.NodeVisitor):
 
     def __init__(self, tree):
         self.scopes = [BindingScope(tree.body, "module")]
-        self.scopes[0].values["eval"] = "builtins.eval"
-        self.scopes[0].writes["eval"] += 1
+        for name in ("eval", "exec"):
+            self.scopes[0].values[name] = f"builtins.{name}"
+            self.scopes[0].writes[name] += 1
         self.symbols = []
         self.matches = []
 
@@ -415,6 +416,14 @@ class PythonPolicy(ast.NodeVisitor):
             self.record("PY-002", debug, node)
         if callee == "builtins.eval":
             self.record("PY-003", node.func, node)
+        if callee == "builtins.exec":
+            self.record("PY-004", node.func, node)
+        if callee in {"pickle.load", "pickle.loads"}:
+            self.record("PY-006", node.func, node)
+        shell = options.get("shell")
+        if callee in {"subprocess.Popen", "subprocess.run", "subprocess.call",
+                      "subprocess.check_call", "subprocess.check_output"} and isinstance(shell, ast.Constant) and shell.value is True:
+            self.record("PY-005", shell, node)
         self.generic_visit(node)
 
 
@@ -524,14 +533,15 @@ def parse_diagnostic(error):
     return detail
 
 
-def run_analysis(sources, rule_ids):
+def run_analysis(sources, rule_ids, *, include_review=False):
     findings, stages = [], []
+    catalog = REPORT_RULES if include_review else RULES
     if "inventory" in sources:
         findings, path_stage = inspect_repository_paths(sources["inventory"])
         stages.append(path_stage)
     project_files = sources.get("files")
     for engine, (default_name, analyze) in ENGINES.items():
-        active = [rule for rule in rule_ids if RULES[rule]["engine"] == engine]
+        active = [rule for rule in rule_ids if catalog[rule]["engine"] == engine]
         if not active:
             stages.append({"id": engine, "status": "skipped", "message": "Правила отключены"})
             continue
@@ -565,7 +575,7 @@ def run_analysis(sources, rule_ids):
                     "id": f"{rule_id}-{occurrences[rule_id]}", "ruleId": rule_id,
                     "file": filename, "line": line, "column": column,
                     "fingerprint": sha256(f"{rule_id}:{fingerprint_name}:{context}".encode()).hexdigest()[:32],
-                    "evidence": lines[line - 1].strip()[:200], **RULES[rule_id]
+                    "evidence": lines[line - 1].strip()[:200], **catalog[rule_id]
                 })
                 file_count += 1
             coverage.append({"file": filename, "status": "done", "message": f"Замечаний: {file_count}"})

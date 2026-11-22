@@ -16,9 +16,9 @@ from delivery import account_smtp
 
 READS = frozenset(("organizations", "projects", "profile", "analytics", "logs", "export", "members", "invitations",
                    "news", "overview", "issues", "issue", "repository", "project/sources", "release/runs",
-                   "release", "release/export", "account/email", "admin/users"))
+                   "release", "release/export", "account/email", "project/smtp", "admin/users"))
 WRITES = frozenset(("organizations", "projects", "members", "invitations", "news", "news/comments", "news/moderate",
-                    "issue", "repository", "policy/simulate", "account/profile", "account/email", "admin/users"))
+                    "issue", "repository", "policy/simulate", "account/profile", "account/email", "project/smtp", "admin/users"))
 IDENTIFIER = re.compile(r"(?:default|[a-f0-9]{32})")
 
 
@@ -67,6 +67,16 @@ class PortalService:
         project = self.app.require_project(actor, project_id(query))
         return project["organizationId"], project["id"], project["role"] == "manager" and actor.role != "reader"
 
+    def project_smtp(self, actor, query, payload=None):
+        from case_account_email import manage_project_smtp, project_smtp_status
+
+        project = self.app.require_project(actor, project_id(query))
+        if actor.role == "reader" or project["role"] != "manager":
+            raise WorkspaceError("Для настройки доставки SMTP нужен доступ руководителя проекта.", 403)
+        if payload is None:
+            return project_smtp_status(self.store, project["id"], actor.username)
+        return manage_project_smtp(self.store, project["id"], actor.username, payload)
+
     def get(self, name, actor, query):
         if name == "admin/users":
             from account_recovery import list_users
@@ -74,6 +84,8 @@ class PortalService:
         if name == "account/email":
             from case_account_email import status
             return status(self.store, actor.username, account_smtp(SMTP))
+        if name == "project/smtp":
+            return self.project_smtp(actor, query)
         if name == "organizations":
             return {"organizations": self.organizations(actor)}
         if name == "projects":
@@ -166,6 +178,8 @@ class PortalService:
         if name == "account/email":
             from case_account_email import manage
             return manage(self.store, self.app.signals, actor.username, payload, account_smtp(SMTP))
+        if name == "project/smtp":
+            return self.project_smtp(actor, query, payload)
         if name == "account/profile":
             if set(payload) - {"displayName", "avatar"}:
                 raise WorkspaceError("Можно изменить только имя и аватар.")

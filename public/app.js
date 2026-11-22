@@ -4,7 +4,7 @@ import {createPageGuide} from "/page_guide.js";
 import {githubFields, mountGithub, githubSelection, boundSourceOptions, archiveBase64, projectUpload} from "/source_picker.js";
 import {createJournal} from "/journal.js";
 import {createPortal} from "/portal.js";
-import {setProjectChoices} from "/project_hub.js";
+import {setProjectChoices, severityLabels} from "/project_hub.js";
 import {createProjectScreens} from "/project.js";
 import {createRelease, gateResult} from "/release.js";
 
@@ -94,9 +94,6 @@ const accountEditor = createAccountEditor({request, getViewer: () => viewer,
   accountEditor.refresh();
   announce("Профиль сохранён.");
 }});
-new ResizeObserver(([entry]) => {
-  document.documentElement.style.setProperty("--masthead-measured", Math.ceil(entry.target.getBoundingClientRect().height) + "px");
-}).observe(document.querySelector(".masthead"));
 document.addEventListener("click", event => {
   if (accountTools.open && (!accountTools.contains(event.target) || event.target.closest("button,a"))) accountTools.open = false;
 });
@@ -192,7 +189,8 @@ function runRows(runs) {
 
 function renderFinding(finding, run, open) {
   const recommendation = finding.recommendation;
-  const label = finding.level === "high" ? ["Высокая", "red"] : ["Средняя", "amber"];
+  const label = [severityLabels[finding.level] || "Не определена",
+    {critical:"red", high:"red", medium:"amber"}[finding.level] || "neutral"];
   const decision = finding.triageDecision;
   const triage = `<div class="triage-summary"><p><strong>Решение</strong> ${escape(triageLabels[finding.triage])}</p>
     ${decision ? `<p>${escape(decision.reason)}</p><p class="fine-print">${escape(decision.actor)} · ${dateLabel(decision.at)}
@@ -304,7 +302,7 @@ function renderRun(run) {
 }
 
 function reportDownloads(run) {
-  return Object.entries({xlsx: "Excel (.xlsx)", "csv-ru": "CSV", json: "JSON"}).map(([format, label]) => {
+  return Object.entries({xlsx: "Excel (.xlsx)", "csv-ru": "CSV", json: "JSON", sarif: "SARIF"}).map(([format, label]) => {
     const query = new URLSearchParams({project: run.projectId || projectId || "default", runId: run.id, format});
     return `<a class="button" href="/api/export?${escape(query)}" data-report-download download>${label}</a>`;
   }).join("");
@@ -748,7 +746,7 @@ function setRun(run) {
     detailMarker = undefined;
     const {findings, stages, fixed, coverage, diagnostics, ...metadata} = run;
     summary = {...metadata, diagnosticCount: diagnosticCount(run), findingCount: findings.length,
-      highCount: findings.filter(item => item.level === "high").length};
+      highCount: findings.filter(item => ["high", "critical"].includes(item.level)).length};
   }
   if (index < 0) workspace.runs = [summary, ...workspace.runs].slice(0, 50);
   else workspace.runs[index] = summary;

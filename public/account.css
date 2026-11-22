@@ -10,3 +10,7 @@
 [data-avatar-preview] { width:50px; height:50px; border-radius:50%; }
 .person-label { display:inline-flex; align-items:center; gap:8px; vertical-align:middle; }
 .person-avatar { display:inline-grid; place-items:center; flex:0 0 28px; width:28px; height:28px; border-radius:50%; object-fit:cover; background:var(--mint); color:var(--forest); font-size:11px; font-weight:650; }
+.account-email-dialog h2 { margin:0; }
+.account-email-dialog form:not([hidden]) { display:grid; gap:.65rem; }
+.account-email-dialog form .button { justify-self:start; }
+.account-email-dialog [role="status"],.account-email-dialog [role="alert"] { overflow-wrap:anywhere; line-height:1.5; }

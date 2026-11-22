@@ -31,7 +31,14 @@
 .page :is(.portal-heading, .page-heading) p { margin-top: 3px; font-size: 14px; line-height: 1.35; }
 .project-tabs a { min-height: 32px; padding-block: 4px; }
 .automation-header { min-height: 44px; padding: 4px var(--gutter); gap: 5px 12px; }
-.automation-stage { height: max(300px, calc(100dvh - var(--masthead-measured,50px) - 46px)); flex-grow: 0; }
+body:has(.automation-screen,.studio-activity) { height:100dvh; min-height:0; overflow:hidden; }
+body:has(.automation-screen,.studio-activity) .masthead { position:relative; flex:none; z-index:8; }
+main:has(.automation-screen,.studio-activity) { flex:1 1 0; min-height:0; overflow:clip; }
+#page:has(.studio-activity) { width:100%; height:100%; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.automation-screen { min-height:0; }
+.automation-screen > :is(.automation-header,.automation-warning,.automation-trigger-line) { flex:none; }
+.automation-screen > .automation-stage { flex:1 1 0; min-height:0; height:auto; }
+.automation-screen > .automation-log { flex:0 1 auto; max-height:46%; overflow:auto; overscroll-behavior:contain; }
 .automation-top-tools { top: 10px; right: 10px; }
 .automation-bottom-tools { bottom: 10px; left: 10px; right: 10px; }
 .garden-home:has(.overview-destinations) { display: grid; align-items: center; }
@@ -83,7 +90,6 @@
   .overview-destinations a { min-height: clamp(58px,12svh,100px); grid-template: auto / auto 1fr auto; align-items: center; padding: 11px 17px; border-radius: 13px; }
   .overview-icon { grid-column: auto; align-self: center; width: 23px; height: 23px; }
   .automation-header { padding: 3px 8px; min-height: 43px; }
-  .automation-stage { height: max(260px,calc(100dvh - var(--masthead-measured,44px) - 48px)); }
 }
 
 .analytics-board { display:grid; gap:clamp(8px,1.6vh,16px); min-width:0; }

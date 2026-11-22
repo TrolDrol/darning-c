@@ -1,5 +1,6 @@
-"""Private per-account email verification; SMTP credentials stay in the delivery worker."""
+"""Verify account mailboxes and resolve authorized project SMTP recipients."""
 import hmac
+import os
 import re
 import secrets
 from email.errors import HeaderParseError
@@ -32,6 +33,82 @@ def status(store, username, configured):
     pending = row if row and row["active"] else {}
     return {"email": row["verified_email"] if row else None, "pending": pending.get("pending_email"),
             "state": pending.get("state"), "configured": bool(configured)}
+
+
+def operator_project_recipient(project):
+    assigned = {item.strip() for item in os.getenv("BANK_STUDIO_SMTP_PROJECTS", "default").split(",")}
+    return project in assigned and all(os.getenv(key, "").strip() for key in ("BANK_SMTP_HOST", "BANK_SMTP_TO"))
+
+
+def _recipient_profile(db, project, roles, username=None):
+    return db.execute("""SELECT account.username,
+                            CASE WHEN account.deleted_at IS NULL
+                                AND (member.role=ANY(%s) OR org.role='owner')
+                                THEN mail.verified_email END AS verified_email
+                        FROM bank_project AS project
+                        LEFT JOIN bank_project_smtp_recipient AS selected ON selected.project_id=project.id
+                        JOIN bank_account AS account ON account.username=COALESCE(%s, selected.username)
+                        LEFT JOIN bank_account_email AS mail ON mail.username=account.username
+                        LEFT JOIN bank_project_member AS member
+                            ON member.project_id=project.id AND member.username=account.username
+                        LEFT JOIN bank_organization_member AS org
+                            ON org.organization_id=project.organization_id AND org.username=account.username
+                        WHERE project.id=%s""", (roles, username, project)).fetchone()
+
+
+def project_recipient(store, project, username):
+    if not username:
+        return None
+    with store.connect() as db:
+        row = _recipient_profile(db, project, ["manager", "editor"], username)
+    return row["verified_email"] if row else None
+
+
+def automatic_project_recipient(store, project):
+    with store.connect() as db:
+        row = _recipient_profile(db, project, ["manager"])
+    return row["verified_email"] if row else None
+
+
+def _project_smtp_status(db, project, username):
+    selected = _recipient_profile(db, project, ["manager"])
+    own_profile = _recipient_profile(db, project, ["manager"], username)
+    operator = operator_project_recipient(project)
+    return {
+        "configured": operator or bool(selected and selected["verified_email"]),
+        "managedByOperator": operator,
+        "own": bool(selected and selected["username"] == username),
+        "verifiedEmail": own_profile["verified_email"] if own_profile else None,
+    }
+
+
+def project_smtp_status(store, project, username):
+    with store.connect() as db:
+        return _project_smtp_status(db, project, username)
+
+
+def manage_project_smtp(store, project, username, payload):
+    from production_store import _audit
+
+    action = payload.get("action")
+    if set(payload) != {"action"} or action not in ("set", "clear"):
+        raise WorkspaceError("Выберите назначение или удаление получателя SMTP.")
+    if operator_project_recipient(project):
+        raise WorkspaceError("Получателя SMTP этого проекта настраивает оператор.", 409)
+    with store.connect() as db:
+        if action == "set":
+            profile = _recipient_profile(db, project, ["manager"], username)
+            if not profile or not profile["verified_email"]:
+                raise WorkspaceError("Для назначения подтвердите почту в профиле руководителя проекта.", 409)
+            result = db.execute("""INSERT INTO bank_project_smtp_recipient (project_id, username)
+                                   VALUES (%s, %s) ON CONFLICT (project_id) DO UPDATE
+                                   SET username=excluded.username
+                                   WHERE bank_project_smtp_recipient.username<>excluded.username""", (project, username))
+        else:
+            result = db.execute("DELETE FROM bank_project_smtp_recipient WHERE project_id=%s", (project,))
+        if result.rowcount:
+            _audit(db, username, f"project.smtp.{action}", project, project)
+        return _project_smtp_status(db, project, username)
 
 
 def manage(store, signals, username, payload, configured):

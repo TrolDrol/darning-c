@@ -31,11 +31,20 @@ def valid_path(path):
 
 
 def matches_filter(path, filters):
-    name = PurePosixPath(path).name
+    from case_sca import GRADLE_CATALOG, GRADLE_LOCK, GRADLE_SETTINGS, gradle_support_files
+    filename = PurePosixPath(path)
+    name = filename.name
     support = {"python": path.lower().endswith(".py"), "config": path.lower().endswith(".json"),
                "sast": path.lower().endswith(".kt"), "secrets": True,
-               "sca": name in ("pom.xml", "build.gradle.kts", "gradle.lockfile", "gradle.properties")}
-    return any(support.get(engine) and (not selected or selected == path) for engine, selected in filters.items())
+               "sca": name in ("pom.xml", "build.gradle.kts", GRADLE_LOCK, "gradle.properties", *GRADLE_SETTINGS)
+                      or filename.parts[-2:] == PurePosixPath(GRADLE_CATALOG).parts}
+    for engine, selected in filters.items():
+        if support.get(engine) and (not selected or selected == path):
+            return True
+        if engine == "sca" and selected and PurePosixPath(selected).name == "build.gradle.kts":
+            if path in gradle_support_files(PurePosixPath(selected)):
+                return True
+    return False
 
 
 def repository_inventory(paths, *, filters=None, empty_repository=False):

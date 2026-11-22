@@ -16,9 +16,10 @@ FIELDS = """id, project_id AS "projectId", lineage, rule_id AS "ruleId", file_pa
     fingerprint, level, title, line, occurrences, state, triage, decision AS "triageDecision", assignee,
     first_seen AS "firstSeenAt", last_seen AS "lastSeenAt", last_run AS "lastRunId",
     state_run AS "stateRunId", is_new AS "isNew" """
+SEVERITY_ORDER = "CASE level WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END DESC"
 FILTERS = {"open": "state='open'", "all": "true", "fixed": "state='fixed'",
-           "priority": "state='open' AND level='high' AND is_new AND (triage='open' OR (decision->>'expiresAt')::date<CURRENT_DATE)",
-           "new": "state='open' AND is_new", "high": "state='open' AND level='high'",
+           "priority": "state='open' AND level IN ('high','critical') AND is_new AND (triage='open' OR (decision->>'expiresAt')::date<CURRENT_DATE)",
+           "new": "state='open' AND is_new", "high": "state='open' AND level IN ('high','critical')",
            "review": "state='open' AND (decision->>'expiresAt')::date <= CURRENT_DATE",
            "mine": "state='open' AND assignee=%s"}
 CANDIDATES = """
@@ -199,13 +200,13 @@ class IssueStore:
         with self.store.connect() as db:
             total = db.execute("SELECT count(*) AS n" + source + where, params).fetchone()["n"]
             rows = db.execute("SELECT " + FIELDS + ", repository" + source + where +
-                              " ORDER BY (level='high') DESC,last_seen DESC,id LIMIT %s OFFSET %s", (*params, limit, offset))
+                              f" ORDER BY {SEVERITY_ORDER},last_seen DESC,id LIMIT %s OFFSET %s", (*params, limit, offset))
             return {"issues": [_public(row) for row in rows], "total": total, "offset": offset, "limit": limit}
 
     def assigned(self, username, accessible_project_ids):
         with self.store.connect() as db:
             rows = db.execute("SELECT " + FIELDS + " FROM bank_issue WHERE project_id=ANY(%s) AND assignee=%s "
-                              "AND state='open' ORDER BY (level='high') DESC,last_seen DESC,id LIMIT 100",
+                              f"AND state='open' ORDER BY {SEVERITY_ORDER},last_seen DESC,id LIMIT 100",
                               (list(accessible_project_ids), username))
             return [_public(row) for row in rows]
 
@@ -213,7 +214,7 @@ class IssueStore:
         with self.store.connect() as db:
             return db.execute(
                 """SELECT count(*) FILTER(WHERE state='open') AS open,
-                          count(*) FILTER(WHERE state='open' AND level='high') AS high,
+                          count(*) FILTER(WHERE state='open' AND level IN ('high','critical')) AS high,
                           count(*) FILTER(WHERE state='open' AND is_new) AS new,
                           count(*) FILTER(WHERE state='open' AND (decision->>'expiresAt')::date<=CURRENT_DATE) AS review,
                           count(*) FILTER(WHERE state='fixed') AS fixed

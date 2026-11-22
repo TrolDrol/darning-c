@@ -333,9 +333,17 @@ class TelegramIntegration:
         report_link=self.report_button(row["project_id"],row["run_id"])
         if report_link:
             buttons.append([{"text":"Обсудить с ИИ в Штопке","url":report_link[0]["url"]+"?discuss="+fingerprint(f)}])
+            from case_repair import FINDING_ID, source_for
+            repair_id = f.get("repairId", "")
+            if row["state"] in ("open", "failed") and source_for({"source": source}) and FINDING_ID.fullmatch(repair_id):
+                url = report_link[0]["url"] + "?repair="
+                buttons.append([{"text": "Исправить с ИИ", "url": url + repair_id},
+                                {"text": "Исправить все", "url": url + "all"}])
         return {"text":text[:3900],"reply_markup":{"inline_keyboard":buttons}}
 
     def notify(self, project, report, findings):
+        from case_repair import repair_key
+
         if not self.configured():
             return "failed","Администратору нужно настроить Telegram-бота."
         with self.store.connection() as q:
@@ -349,7 +357,8 @@ class TelegramIntegration:
         with self.store.connection() as q:
             for index,f in enumerate(active[:PAGE_LIMIT],start):
                 fact={k:f[k] for k in ("category","class","path","line","group","artifact","version","severity",
-                                       "advisoryId","title","description","fix") if k in f}
+                                       "advisoryId","title","description","fix","dependencySource") if k in f}
+                fact["repairId"] = repair_key(f)
                 if advice:=model_advice(report.get("summary"),f):
                     fact["advice"]=advice
                 q("""INSERT INTO studio_tg_notice(id,project_id,run_id,binding,source,ordinal,finding,fingerprint,updated_at)

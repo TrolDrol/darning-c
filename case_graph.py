@@ -8,26 +8,33 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 import case_regex
 import case_custom
+from case_model import ModelReference
+from case_severity import RANK
 
 
 EVENT_TRIGGERS = ("github_pr", "github_push", "webhook")
-TRIGGERS = ("manual", "schedule", *EVENT_TRIGGERS)
-NODE_TYPES = (*TRIGGERS, "source", "secrets", "sca", "sast", "condition", "explain", "verify",
-              "notify", "regex", "custom", "json_keys", "ai_review")
-SCANNERS = {"secrets", "sca", "sast", "json_keys"}
+AUTOMATIC_TRIGGERS = ("schedule", *EVENT_TRIGGERS)
+TRIGGERS = ("manual", *AUTOMATIC_TRIGGERS)
+SCANNERS = ("secrets", "sca", "sast", "json_keys", "github_actions", "dockerfile", "java_review", "dependency_review",
+            "spring_review", "spring_routes", "package_review", "literal_review")
+NODE_TYPES = (*TRIGGERS, "source", *SCANNERS, "condition", "explain", "verify",
+              "notify", "regex", "custom", "ai_review", "model_load")
 SEVERITIES = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
-CATEGORIES = ("SECRET", "SCA", "SAST")
+CATEGORIES = ("SECRET", "SCA", "SAST", "QUALITY", "PERF")
 
 # Flow sockets transport the existing finding packets. Data sockets carry one
 # immutable value per run, including zero, false, and the empty list.
 INPUT_SOCKETS = {
     "regex": {"in": "flow", "values": "strings"},
     "condition": {"in": "flow", "count": "int", "found": "bool"},
+    "explain": {"in": "flow", "model": "model"},
+    "ai_review": {"in": "flow", "model": "model"},
 }
 OUTPUT_SOCKETS = {
     "source": {"next": "flow", "paths": "strings"},
     "condition": {"true": "flow", "false": "flow"},
     "regex": {"count": "int", "matches": "strings", "found": "bool"},
+    "model_load": {"model": "model"},
 }
 INPUT_SOCKETS["custom"] = INPUT_SOCKETS["regex"]
 OUTPUT_SOCKETS["custom"] = OUTPUT_SOCKETS["regex"]
@@ -172,21 +179,29 @@ def schedule_zone(name):
 def _parameters(kind, params):
     if not isinstance(params, dict):
         raise GraphError("Параметры блока должны быть объектом.")
-    if kind == "ai_review":
+    if kind in ("ai_review", "model_load"):
         if set(params) - {"connection","model"}:
-            raise GraphError("В блоке обзора допустимы имя подключения и ID модели.")
-        if "connection" in params and (not isinstance(params["connection"],str)
-                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}",params["connection"])):
+            raise GraphError("Для модели допустимы имя подключения и ID модели.")
+        if kind == "model_load":
+            params = {key: value for key, value in params.items() if value != ""}
+        if "connection" in params and (not isinstance(params["connection"], str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", params["connection"])):
             raise GraphError("Выберите именованное подключение проекта.")
-        _parameters("explain", {"model":params["model"]} if "model" in params else {})
+        _parameters("explain", {"model": params["model"]} if "model" in params else {})
         return dict(params)
     if kind in ("regex", "custom"):
         try:
             return case_regex.validate_parameters(params) if kind == "regex" else case_custom.parameters(params)
         except ValueError as error:
             raise GraphError(str(error)) from error
+    if kind == "literal_review":
+        from case_literal_review import parameters
+        try:
+            return parameters(params)
+        except ValueError as error:
+            raise GraphError(str(error)) from error
     if kind in SCANNERS:
-        allowed = {"directory"} | ({"language"} if kind == "sast" else {"manifest"} if kind == "sca" else set())
+        allowed = {"directory"} | ({"language"} if kind == "sast" else {"manifest"} if kind in ("sca", "dependency_review") else set())
         if set(params) - allowed:
             raise GraphError("Проверьте параметры анализатора.")
         if "directory" in params:
@@ -194,7 +209,7 @@ def _parameters(kind, params):
             if (not isinstance(path, str) or len(path) > 250 or
                     any(part in ("", ".", "..") or not re.fullmatch(r"[\w. -]+", part) for part in path.split("/"))):
                 raise GraphError("Укажите папку от корня проекта, например src/main.")
-        if ("language" in params and params["language"] not in ("kotlin", "python", "json")
+        if ("language" in params and params["language"] not in ("kotlin", "python", "json", "javascript")
                 or "manifest" in params and params["manifest"] not in ("gradle", "maven")):
             raise GraphError("Выберите поддерживаемый тип файлов.")
         return dict(params)
@@ -207,14 +222,25 @@ def _parameters(kind, params):
             raise GraphError("Укажите ID модели с сервера проекта.")
         return dict(params)
     if kind == "notify" and params:
-        if set(params) != {"channel"} or params["channel"] not in ("smtp", "telegram"):
-            raise GraphError("Выберите SMTP или Telegram.")
+        if set(params) != {"channel"} or params["channel"] not in ("smtp", "telegram", "webhook"):
+            raise GraphError("Выберите SMTP, Telegram или HTTP-вебхук.")
         return dict(params)
     if kind == "source" and params:
         if set(params) != {"repository"} or not is_bound_source(params["repository"]):
             raise GraphError("Для этого источника доступен привязанный репозиторий.")
         return dict(params)
     if kind == "schedule":
+        if "cron" in params:
+            if set(params) - {"cron", "timezone"}:
+                raise GraphError("Для cron задайте выражение и часовой пояс.")
+            from case_cron import compile as compile_cron
+            try:
+                expression = compile_cron(params["cron"]).text
+                if "timezone" in params:
+                    schedule_zone(params["timezone"])
+            except ValueError as error:
+                raise GraphError(str(error)) from error
+            return params | {"cron": expression}
         if set(params) - {"time", "timezone", "weekdays", "monthDay"} or not isinstance(params.get("time"), str) or not re.fullmatch(
             r"(?:[01]\d|2[0-3]):[0-5]\d", params["time"], re.ASCII
         ):
@@ -302,7 +328,7 @@ def validate_graph(graph, *, draft=False):
     sources = [key for key, node in nodes.items() if node["type"] == "source"]
     if len(triggers) > 1 or len(sources) > 1 or (not draft and (not triggers or not sources)):
         raise GraphError("Добавьте один триггер и один источник проекта.")
-    edges, seen, destinations = [], set(), set()
+    edges, seen, destinations, flow_destinations = [], set(), set(), set()
     data_inputs = defaultdict(set)
     for edge in graph["edges"]:
         if not isinstance(edge, dict):
@@ -321,12 +347,16 @@ def validate_graph(graph, *, draft=False):
         if input_name != "in":
             if input_name in data_inputs[dest]:
                 raise GraphError("Вход данных уже подключён.")
+            if input_name == "model" and nodes[dest]["params"].get("mode") == "catalog":
+                raise GraphError("Для каталога рекомендаций подключение модели не используется.")
             if nodes[dest]["type"] == "condition":
                 if data_inputs[dest]:
                     raise GraphError("Для условия выберите один вход данных: количество или флаг.")
                 if input_name == "count" and nodes[dest]["params"]["field"] != "count":
                     raise GraphError("Для входа количества выберите условие по количеству.")
             data_inputs[dest].add(input_name)
+        else:
+            flow_destinations.add(dest)
         if dest in triggers or (origin in triggers) != (dest in sources):
             raise GraphError("Триггер должен передавать управление источнику проекта.")
         if nodes[dest]["type"] == "verify" and (nodes[origin]["type"] != "explain" or dest in destinations):
@@ -340,10 +370,14 @@ def validate_graph(graph, *, draft=False):
     _topological(nodes, edges)
     if not draft and set(nodes) - destinations != {triggers[0]}:
         raise GraphError("Свяжите все узлы с триггером.")
+    if not draft and any("model" in ports and dest not in flow_destinations for dest, ports in data_inputs.items()):
+        raise GraphError("Подключите ход проверки к основному входу узла ИИ.")
     return {"nodes": list(nodes.values()), "edges": edges}
 
 
-def _identity(item):
+def finding_identity(item):
+    if item.get("checkId"):
+        return (item["checkId"], item.get("fingerprint"), item.get("path"), item.get("line"), item.get("column"))
     if item.get("class") == "json-duplicate-key":
         return ("json-duplicate-key", item["path"], item["line"], item["column"])
     if item["category"] == "SCA":
@@ -353,12 +387,24 @@ def _identity(item):
     return tuple(item.get(key) for key in keys)
 
 
+def merge_finding(previous, current):
+    if not previous:
+        return current
+    combined = previous | current
+    old_rank = RANK.get(str(previous.get("severity")).lower(), 0)
+    new_rank = RANK.get(str(current.get("severity")).lower(), 0)
+    if old_rank > new_rank:
+        combined["severity"] = previous["severity"]
+    return combined
+
+
 def _sample(item):
     """Only pass report coordinates across the event API. Never include snippets or prose."""
+    from case_archive import valid_path
+
     result = {"category": item["category"]}
     path = item.get("path")
-    if (isinstance(path, str) and 0 < len(path) <= 350
-            and all(re.fullmatch(r"[\w.-]+", part) and part not in (".", "..") for part in path.split("/"))):
+    if valid_path(path):
         result["path"] = path
     line = item.get("line")
     if type(line) is int and line > 0:
@@ -378,19 +424,28 @@ def _summary(items):
                                       if str(f.get("severity")).upper() in SEVERITIES))}
 
 
-def _condition(params, items):
+def _condition(params, items, inputs):
     field, op, value = params["field"], params["op"], params["value"]
-    if field == "category":
-        return any(f.get("category") == value for f in items)
+    if "found" in inputs:
+        return inputs["found"], {"source": "found", "observed": inputs["found"]}, None
     if field == "count":
-        return len(items) == value if op == "eq" else len(items) >= value
-    if field == "path":
-        paths = {f.get("path", "") for f in items}
-        return value in paths if op == "eq" else any(_matches(value, path) for path in paths)
-    levels = {str(f.get("severity", "")).upper() for f in items}
-    if op == "eq":
-        return value in levels
-    return any(level in levels for level in SEVERITIES[SEVERITIES.index(value):])
+        observed = inputs.get("count", len(items))
+        selected = observed == value if op == "eq" else observed >= value
+        return selected, {"source": "count" if "count" in inputs else "findings",
+                          "observed": observed, "operator": op, "expected": value}, None
+    if field == "category":
+        matched = next((item for item in items if item.get("category") == value), None)
+    elif field == "path":
+        paths = {}
+        for item in items:
+            paths.setdefault(item.get("path", ""), item)
+        matched = (paths.get(value) if op == "eq" else
+                   next((item for path, item in paths.items() if _matches(value, path)), None))
+    else:
+        levels = (value,) if op == "eq" else SEVERITIES[SEVERITIES.index(value):]
+        matched = next((item for item in items if str(item.get("severity", "")).upper() in levels), None)
+    selected = matched is not None
+    return selected, {"source": "match", "field": field, "observed": selected}, matched
 
 
 class PacketTrace:
@@ -414,7 +469,7 @@ class PacketTrace:
         refs = []
         for item in findings:
             record = _sample(item)
-            for field in ("severity", "class", "group", "artifact", "version"):
+            for field in ("severity", "class", "checkId", "fingerprint", "group", "artifact", "version"):
                 value = item.get(field)
                 if isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9._+:-]{1,150}", value):
                     record[field] = value
@@ -433,6 +488,11 @@ class PacketTrace:
     def capture_ports(self, node, side, values):
         self.data[side].setdefault(node["id"], {})["ports"] = values
 
+    def capture_condition(self, node, evidence, matched):
+        if matched is not None:
+            evidence = evidence | {"ref": self.references([matched])[0]}
+        self.data.setdefault("conditions", {})[node["id"]] = evidence
+
     def capture(self, node, port, findings):
         output = {"port": port, "refs": self.references(findings)}
         if node["type"] == "source" and "snapshot" in self.data:
@@ -443,7 +503,11 @@ class PacketTrace:
         self.data["outputs"][node["id"]] = output
 
 
-def execute_graph(graph, run_node, on_stage, on_packet=None, on_input=None, on_ports=None):
+def _visible_ports(values):
+    return {key: value.public() if isinstance(value, ModelReference) else value for key, value in values.items()}
+
+
+def execute_graph(graph, run_node, on_stage, on_packet=None, on_input=None, on_ports=None, on_condition=None):
     graph = validate_graph(graph)
     nodes = {node["id"]: node for node in graph["nodes"]}
     order, outgoing = _topological(nodes, graph["edges"])
@@ -464,26 +528,23 @@ def execute_graph(graph, run_node, on_stage, on_packet=None, on_input=None, on_p
             received.add("in")
         findings = list(merged.values())
         stage = {"id": key, "type": kind, "input": _summary(findings)}
-        if not required[key].issubset(received):
-            on_stage(stage | {"status": "skipped", "output": _summary([])})
+        missing_inputs = sorted(required[key] - received)
+        if missing_inputs:
+            on_stage(stage | {"status": "skipped", "output": _summary([]), "missingInputs": missing_inputs})
             continue
         if kind in ("regex", "custom") and "values" not in inputs:
             inputs["values"] = params["values"]
         if on_input:
             on_input(node, findings)
         if inputs and on_ports:
-            on_ports(node, "inputs", inputs)
+            on_ports(node, "inputs", _visible_ports(inputs))
         on_stage(stage | {"status": "running", "output": {}})
         port, values = "next", {}
         try:
             if kind == "condition":
-                if "found" in inputs:
-                    selected = inputs["found"]
-                elif "count" in inputs:
-                    selected = (inputs["count"] >= params["value"] if params["op"] == "gte"
-                                else inputs["count"] == params["value"])
-                else:
-                    selected = _condition(params, findings)
+                selected, evidence, matched = _condition(params, findings, inputs)
+                if on_condition:
+                    on_condition(node, evidence, matched)
                 port = "true" if selected else "false"
             elif kind == "custom":
                 values = case_custom.evaluate(params["steps"], inputs["values"])
@@ -495,18 +556,25 @@ def execute_graph(graph, run_node, on_stage, on_packet=None, on_input=None, on_p
                     raise GraphError(str(error)) from error
                 port = None
             elif kind not in TRIGGERS:
+                if "model" in inputs:
+                    params = params | {"modelReference": inputs["model"]}
                 result = run_node(kind, params, deepcopy(findings))
                 if kind == "source" and isinstance(result, list):
                     values = {"paths": result}
+                if kind == "model_load":
+                    if not isinstance(result, ModelReference):
+                        raise GraphError("Не удалось загрузить подключение модели.")
+                    values = {"model": result}
+                    port = None
                 if kind in SCANNERS or kind == "explain" and result is not None:
                     if not isinstance(result, list):
                         raise GraphError("Обработчик должен вернуть список находок.")
                     for finding in result:
-                        ident = _identity(finding)
+                        ident = finding_identity(finding)
                         if kind == "explain" and ident not in merged:
                             raise GraphError("Пояснение ссылается на неизвестную находку.")
-                        merged[ident] = finding
-                        all_findings[ident] = finding
+                        merged[ident] = merge_finding(merged.get(ident), finding)
+                        all_findings[ident] = merge_finding(all_findings.get(ident), merged[ident])
         except Exception:
             on_stage(stage | {"status": "error", "output": {}})
             raise
@@ -516,7 +584,7 @@ def execute_graph(graph, run_node, on_stage, on_packet=None, on_input=None, on_p
         if values:
             output["ports"] = list(values)
             if on_ports:
-                on_ports(node, "outputs", values)
+                on_ports(node, "outputs", _visible_ports(values))
         on_stage(stage | {"status": "done", "output": output})
         for edge in outgoing[key]:
             if edge["port"] in values:
@@ -524,5 +592,5 @@ def execute_graph(graph, run_node, on_stage, on_packet=None, on_input=None, on_p
             elif edge["port"] == port:
                 target = arrivals.setdefault(edge["to"], {})
                 for ident, finding in merged.items():
-                    target[ident] = target.get(ident, {}) | finding
+                    target[ident] = merge_finding(target.get(ident), finding)
     return list(all_findings.values())

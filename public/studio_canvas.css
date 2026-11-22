@@ -18,6 +18,7 @@
   cursor: grab;
 }
 .automation-canvas.panning, .automation-canvas.panning * { cursor: grabbing !important; }
+.automation-canvas.wiring { cursor:crosshair; }
 .automation-canvas:focus-visible { outline: 2px solid var(--canvas-active); outline-offset: -3px; }
 .automation-canvas .studio-sheet, .automation-canvas .studio-plane { position: absolute; inset: 0; }
 .automation-canvas .studio-plane { transform-origin: 0 0; overflow: visible; }
@@ -33,6 +34,7 @@
 .automation-canvas .studio-edge .studio-hit { fill: none; stroke: transparent; pointer-events: stroke; stroke-width: 17; }
 .automation-canvas .studio-edge .studio-wire { fill: none; pointer-events: stroke; stroke: #9daaa5; stroke-width: 1.8; }
 .automation-canvas .studio-wire.otherwise { stroke-dasharray: 5 4; }
+.automation-canvas .studio-wire.model-link { stroke-dasharray: 2 4; stroke-linecap: round; }
 .automation-canvas .studio-edge.taken .studio-wire { stroke: #7be1a7; stroke-width: 2.7; filter: drop-shadow(0 0 3px #67e59b50); }
 .automation-canvas .studio-edge:is(.selected-edge,:hover,:focus-visible) .studio-wire { stroke: #e0f5e4; stroke-width: 3.3; }
 .automation-canvas .studio-edge.taken:is(:hover,:focus-visible,.selected-edge) .studio-wire { stroke: #a5f3bd; }
@@ -53,7 +55,7 @@
 .automation-canvas .studio-node:is([data-kind=manual], [data-kind=schedule], [data-kind=github_pr], [data-kind=github_push], [data-kind=webhook]) { --node-color: #80651c; background: #fbf1cf; }
 .automation-canvas .studio-node[data-kind=source] { --node-color: #316d56; background: #e2eddc; }
 .automation-canvas .studio-node[data-kind=secrets], .automation-canvas .studio-node[data-kind=sast], .automation-canvas .studio-node[data-kind=sca] { --node-color: #3d627d; background: #e4eef2; }
-.automation-canvas .studio-node[data-kind=explain], .automation-canvas .studio-node[data-kind=verify] { --node-color: #66587e; background: #ede8f2; }
+.automation-canvas .studio-node:is([data-kind=explain],[data-kind=verify],[data-kind=model_load],[data-kind=ai_review]) { --node-color: #66587e; background: #ede8f2; }
 .automation-canvas .studio-node[data-kind=condition] { --node-color: #8a5b38; background: #f5e7d5; }
 .automation-canvas .studio-node[data-kind=notify] { --node-color: #346c64; background: #dcefe9; }
 .automation-canvas .studio-node:is(.selected,:focus-within) { border-color: #a8dab5; box-shadow: 0 0 0 2px #29342e, 0 0 0 3.5px #9cd2aa; }
@@ -101,9 +103,16 @@
 }
 .automation-canvas .socket-card .studio-node-body strong { font-size:13px; line-height:22px; }
 .automation-canvas .socket-card .studio-node-body small { display:none; }
+.automation-canvas .studio-node:is([data-kind=model_load],[data-kind=ai_review]) .canvas-node-caption { min-width:0; }
+.automation-canvas .studio-node[data-kind=ai_review] .studio-node-body strong,
+.automation-canvas .studio-node[data-kind=model_load] .studio-node-body small {
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.automation-canvas .studio-node[data-kind=model_load] .studio-node-body small { display:block; margin:0; }
 .automation-canvas .socket-card .studio-node-body::after {
   content:""; position:absolute; top:36px; left:0; right:0; border-top:1px solid currentColor; opacity:.24;
 }
+.automation-canvas .studio-node[data-kind=model_load] .studio-node-body::after { top:53px; }
 .automation-canvas .canvas-slot-caption {
   position:absolute; transform:translateY(-50%); white-space:nowrap; pointer-events:none;
   font-size:11px; font-weight:600; line-height:1; color:var(--node-color);
@@ -113,9 +122,11 @@
 .automation-canvas [data-socket-type=int] { --socket-color:var(--gold,#bd872c); }
 .automation-canvas [data-socket-type=strings] { --socket-color:var(--link,#588ccc); }
 .automation-canvas [data-socket-type=bool] { --socket-color:var(--success,#6ba287); }
+.automation-canvas [data-socket-type=model] { --socket-color:var(--link,#66587e); }
 .automation-canvas [data-socket-type]:not([data-socket-type=flow]) .canvas-port::after {
   background:var(--socket-color); border-color:var(--socket-color); border-radius:50%; width:10px; height:10px;
 }
+.automation-canvas [data-socket-type=model] .canvas-port::after { border-radius:2px; transform:rotate(45deg); }
 .automation-canvas.wiring .canvas-port.canvas-target::after {
   outline:2px solid var(--canvas-active); outline-offset:2px;
 }

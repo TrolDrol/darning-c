@@ -1,4 +1,4 @@
-import {projectRoute, projectTabs} from "/project_hub.js";
+import {projectRoute, projectTabs, severityLabels} from "/project_hub.js";
 
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char =>
   ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[char]));
@@ -10,7 +10,6 @@ const runName = run => [stamp(run.createdAt), run.source, versionLabel(run),
   run.revision?.slice(0, 9), run.id.slice(0, 6), run.status === "skipped" ? "Без анализа содержимого" : ""].filter(Boolean).join(" · ");
 const gates = {disabled: "Отключено", passed: "Пройдено", blocked: "Требует исправления", insufficient: "Недостаточно данных"};
 const triage = {accepted: "Риск принят", false_positive: "Ложное срабатывание", open: "Открыто"};
-const levels = {high: "Высокая", medium: "Средняя"};
 const stages = {done: "Проверен", error: "Ошибка", skipped: "Пропущен", unknown: "Охват неизвестен"};
 const groups = {new: "Новые", existing: "Сохранились", fixed: "Исправлены", unverified: "Требуют проверки"};
 const option = (value, label, selected) => `<option value="${esc(value)}" ${selected ? "selected" : ""}>${esc(label)}</option>`;
@@ -18,8 +17,8 @@ const option = (value, label, selected) => `<option value="${esc(value)}" ${sele
 export function gateFields(spec) {
   const value = spec.gateMinimum || "off";
   return `<label class="field">Требуют исправления<select data-setting="gateMinimum">
-    ${[["off", "Условие отключено"], ["high", "Новые замечания высокой важности"],
-      ["medium", "Все новые замечания"]].map(([key, label]) => option(key, label, key === value)).join("")}</select></label>
+    ${[["off", "Условие отключено"], ["high", "Высокая важность и выше"],
+      ["medium", "Средняя важность и выше"]].map(([key, label]) => option(key, label, key === value)).join("")}</select></label>
     <p class="fine-print">Действующие решения о принятии риска и ложных срабатываниях учитываются при оценке.</p>`;
 }
 
@@ -48,7 +47,7 @@ function currentDecision(item) {
 function entries(items, exceptions = false) {
   if (!items.length) return "";
   return `<ul>${items.map(item => `<li><strong>${item.issueId
-      ? `<a href="#projects/issues/${encodeURIComponent(item.issueId)}">${esc(item.title)}</a>` : esc(item.title)}</strong> · ${esc(item.ruleId)} · ${esc(levels[item.level] || item.level)}
+      ? `<a href="#projects/issues/${encodeURIComponent(item.issueId)}">${esc(item.title)}</a>` : esc(item.title)}</strong> · ${esc(item.ruleId)} · ${esc(severityLabels[item.level] || item.level)}
       <p><code>${esc(item.file)}</code>${item.line ? `, строка ${esc(item.line)}` : ""}</p>
       ${exceptions ? `<p>${esc(triage[item.triage])} · ${esc(item.triageDecision?.reason)}
         · пересмотр до ${esc(item.triageDecision?.expiresAt)}</p>` : ""}${currentDecision(item)}</li>`).join("")}</ul>`;

@@ -168,7 +168,7 @@ def dispatch(app, studio, key, actor, parts, body, delivery):
             permit(key, "read")
             return scenario(studio.store.automation(project, selected)), 200
         permit(key, "write")
-        fields(body, ("graph", "name", "expectedRevision"))
+        fields(body, ("graph", "name", "expectedRevision", "triggerEnabled"))
         if not isinstance(body.get("expectedRevision"), str) or not re.fullmatch("[a-f0-9]{64}", body["expectedRevision"]):
             raise WorkspaceError("Передайте expectedRevision из ответа на чтение сценария.", 428)
         return scenario(studio.action(project, org, body | {"action": "save", "automationId": selected},
@@ -176,16 +176,19 @@ def dispatch(app, studio, key, actor, parts, body, delivery):
     if len(path) == 3 and path[0] == "scenarios" and path[2] == "runs" and body is not None:
         permit(key, "run")
         from case_triggers import enqueue_webhook
-        fields(body, ("repository", "revision"))
+        fields(body, ("repository", "revision", "baseRevision"))
         selected = automation_id(path[1])
         if not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", delivery or ""):
             raise WorkspaceError("Передайте уникальный Idempotency-Key (до 128 символов).")
         repo, sha = body.get("repository"), body.get("revision")
         if not is_bound_source(repo) or ":" not in repo or not isinstance(sha, str) or not re.fullmatch("[0-9a-fA-F]{40}", sha):
             raise WorkspaceError("Укажите подключённый репозиторий (@bound:<id>) и полный SHA коммита.")
+        base = body.get("baseRevision")
+        if "baseRevision" in body and (not isinstance(base, str) or not re.fullmatch("[0-9a-fA-F]{40}", base)):
+            raise WorkspaceError("В baseRevision передайте полный SHA базового коммита.")
         request_hash = digest(json.dumps([project, selected, repo, sha.lower()]))
         result = enqueue_webhook(studio.store, project, selected, digest(key["id"] + ":" + delivery),
-                                 repo, sha.lower(), actor=actor.username, request_hash=request_hash)
+                                 repo, sha.lower(), actor=actor.username, request_hash=request_hash, base_revision=base)
         return result, 200 if result["duplicate"] else 202
     if path[0] == "runs" and (len(path) == 2 or len(path) == 3 and path[2] == "result") and body is None:
         permit(key, "read")

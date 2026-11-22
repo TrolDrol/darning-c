@@ -4,8 +4,44 @@ from hashlib import sha256
 from pathlib import PurePosixPath
 
 from case_detectors import scan_sast, scan_secrets, spring_properties
-from case_sca import PomInputError, scan_sca
+from case_sca import GRADLE_LOCK, scan_sca
 from case_source import advisory_database
+from case_pipeline_checks import RULES as PIPELINE_RULES
+from case_java_review import RULES as JAVA_RULES
+from case_web_review import RULES as WEB_RULES, inspect as inspect_web
+from case_spring_review import RULES as SPRING_RULES
+from case_jvm_crypto import RULES as JVM_RULES
+from case_kotlin_jpa import RULES as JPA_RULES
+from case_literal_review import RULES as LITERAL_RULES
+from case_package_review import RULES as PACKAGE_RULES
+
+
+REVIEW_RULES = PIPELINE_RULES | JAVA_RULES | WEB_RULES | SPRING_RULES | JVM_RULES | JPA_RULES | LITERAL_RULES | PACKAGE_RULES | {
+    "PY-004": {
+        "engine": "python", "level": "high", "title": "Вызов встроенной функции exec",
+        "risk": "Функция exec исполняет переданный код Python.",
+        "fix": "Замените исполнение строк явным выбором разрешённых операций.",
+        "verify": "Повторите статическую проверку и проверьте обработку неизвестной операции.",
+    },
+    "PY-005": {
+        "engine": "python", "level": "high", "title": "Команда выполняется через оболочку",
+        "risk": "При shell=True оболочка интерпретирует строку команды и её управляющие символы.",
+        "fix": "Передавайте имя программы и аргументы списком и оставьте shell выключенным.",
+        "verify": "Повторите проверку и убедитесь, что аргументы процесса передаются без интерпретации оболочкой.",
+    },
+    "PY-006": {
+        "engine": "python", "level": "high", "title": "Десериализация с помощью pickle",
+        "risk": "Десериализация pickle допускает выполнение кода. Формат требует доверенного источника.",
+        "fix": "Для внешних данных используйте формат без исполняемых объектов и проверяйте его структуру.",
+        "verify": "Повторите проверку и проверьте отклонение данных вне ожидаемого формата.",
+    },
+    "DEP-PR-001": {
+        "engine": "dependency_review", "level": "high", "title": "В PR добавлена уязвимая версия зависимости",
+        "risk": "Новая для этого изменения версия входит в затронутый диапазон опубликованного уведомления.",
+        "fix": "Сверьте версию с уведомлением и выберите исправленную совместимую версию.",
+        "verify": "Повторите сравнение зависимостей и проверьте тесты проекта.",
+    },
+}
 
 
 RULES = {
@@ -18,7 +54,7 @@ RULES = {
                "fix": "Исправьте указанное место с учётом назначения обработчика.",
                "verify": "Повторите статическую проверку и тест соответствующего обработчика."},
     "DEP-001": {"engine": "sca", "title": "Зависимости Gradle и Maven", "level": "high",
-                "risk": "Версия прямой зависимости может входить в диапазон опубликованного уведомления.",
+                "risk": "Версия зависимости может входить в диапазон опубликованного уведомления.",
                 "fix": "Обновите объявление зависимости и проверьте совместимость.",
                 "verify": "Повторите проверку манифеста и тесты проекта."},
 }
@@ -34,6 +70,15 @@ def applicable(path, engine):
 
 def standard_finding(raw, index=1):
     """One stable identity for a finding in a graph or a published rule set."""
+    check = raw.get("checkId")
+    if check in REVIEW_RULES:
+        policy = REVIEW_RULES[check]
+        return policy | {"id": f"{check}-{index}", "ruleId": check, "category": raw["category"],
+                         "file": raw["path"], "line": raw.get("line"), "column": raw.get("column"),
+                         "level": raw["severity"].lower(), "fingerprint": raw["fingerprint"],
+                         "title": raw["title"], "risk": raw["description"], "fix": raw["fix"],
+                         "evidence": raw["description"],
+                         **{key: raw[key] for key in ("endLine", "advisoryId", "advisorySource", "ecosystem", "artifact", "version") if key in raw}}
     if raw.get("standardRule") or raw.get("class") == "repository-sensitive-path":
         from analyzers import RULES as catalog, inspect_repository_paths
         path = raw["path"]
@@ -56,7 +101,7 @@ def standard_finding(raw, index=1):
     detail = f"{raw['group']}:{raw['artifact']} · {advisory}" if advisory else raw["class"]
     # Neither evidence nor stable identities contain the value of a detected secret.
     return {"id": f"{rule}-{index}", "ruleId": rule, "file": path, "line": raw.get("line"),
-            "column": None, "engine": policy["engine"], "level": "high" if raw["severity"] in ("HIGH", "CRITICAL") else "medium",
+            "column": None, "engine": policy["engine"], "level": raw["severity"].lower(),
             "fingerprint": sha256(f"{rule}:{path}:{detail}".encode()).hexdigest()[:32],
             "title": raw["title"], "evidence": detail, "risk": raw.get("description") or policy["risk"],
             **({"sourceContext": raw["sourceContext"]} if raw.get("sourceContext") else {}),
@@ -64,9 +109,9 @@ def standard_finding(raw, index=1):
 
 
 def graph_sast(files):
-    from analyzers import RULES as catalog, run_analysis
+    from analyzers import REPORT_RULES as catalog, run_analysis
     rules = [rule for rule in catalog if catalog[rule]["engine"] in ("python", "config")]
-    matches, stages = run_analysis({"files": files}, rules)
+    matches, stages = run_analysis({"files": files}, rules, include_review=True)
     coverage = [dict(row, engine=step["id"]) for step in stages if step["id"] in ("python", "config")
                 for row in step.get("coverage", [])]
     coverage.extend({"file": path, "engine": "sast", "status": "done", "message": "Проверено"}
@@ -77,23 +122,24 @@ def graph_sast(files):
                       "line": f["line"], "column": f["column"], "fingerprint": f["fingerprint"],
                       "severity": f["level"].upper(), "title": f["title"], "description": f["risk"],
                       "fix": f["fix"], "remediation": f["fix"]})
+        if f["ruleId"] in REVIEW_RULES:
+            items[-1]["checkId"] = f["ruleId"]
+    web = inspect_web(files)
+    items.extend(web["findings"])
+    coverage.extend(web["coverage"])
     return {"findings": items, "coverage": coverage}
 
 
 def manifest_findings(files, catalog):
-    matches, errors = [], {}
-    for path in sorted(files):
-        if files[path] is None or not applicable(path, "sca"):
-            continue
-        build = PurePosixPath(path)
-        support = ("gradle.properties", str(build.with_name("gradle.properties")),
-                   str(build.with_name("gradle.lockfile")))
-        manifest = {name: files[name] for name in support if isinstance(files.get(name), str)}
-        try:
-            matches.extend(scan_sca(manifest | {path: files[path]}, catalog))
-        except PomInputError as exc:
-            errors[path] = str(exc)
-    return matches, errors
+    errors = {path: "Указанный файл не найден в этой версии." for path in sca_paths(files) if files[path] is None}
+    manifests = any(isinstance(text, str) and applicable(path, "sca") for path, text in files.items())
+    return (scan_sca(files, catalog, errors) if manifests else []), errors
+
+
+def sca_paths(files):
+    manifests = {path for path in files if applicable(path, "sca")}
+    locks = {str(PurePosixPath(path).with_name(GRADLE_LOCK)) for path in manifests if PurePosixPath(path).name == "build.gradle.kts"}
+    return sorted(manifests | (locks & files.keys()))
 
 
 def file_coverage(paths, matches, errors):
@@ -109,7 +155,7 @@ def project_analysis(files, rules):
         if rule not in rules:
             stages.append({"id": engine, "status": "skipped", "message": "Правило отключено"})
             continue
-        paths = sorted(path for path in files if applicable(path, engine))
+        paths = sca_paths(files) if engine == "sca" else sorted(path for path in files if applicable(path, engine))
         usable = {path: files[path] for path in paths if files[path] is not None}
         errors = {path: "Указанный файл не найден в этой версии." for path in paths if path not in usable}
         if engine == "secrets":

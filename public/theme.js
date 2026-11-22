@@ -6,9 +6,9 @@
     return `<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`;
   }
   const themes = [
-    {id:"dark", name:"Тёмная", icon:lineIcon(moon)},
-    {id:"light", name:"Светлая", icon:lineIcon(sun)},
-    {id:"vi", name:"VI", icon:'<img src="/darning-swap-theme.png" width="26" height="26" alt="">'}
+    {id:"dark", name:"Тёмная", icon:lineIcon(moon), logo:"/darning-logo.png"},
+    {id:"light", name:"Светлая", icon:lineIcon(sun), logo:"/darning-logo-3.png"},
+    {id:"vi", name:"VI", icon:'<img src="/darning-swap-theme.png" width="26" height="26" alt="">', logo:"/darning-logo-2.png"}
   ];
   function nextTheme() {
     const index = themes.findIndex(item => item.id === document.documentElement.dataset.theme);
@@ -18,8 +18,7 @@
     const current = themes.find(item => item.id === theme) || themes[0];
     document.documentElement.dataset.theme = current.id;
     for (const logo of document.querySelectorAll(".masthead .brand img")) {
-      const src = current.id === "vi" ? "/darning-logo-2.png" : "/darning-logo.png";
-      if (logo.getAttribute("src") !== src) logo.src = src;
+      if (logo.getAttribute("src") !== current.logo) logo.src = current.logo;
     }
     const label = `Тема «${current.name}». Переключить на «${nextTheme().name}»`;
     for (const button of document.querySelectorAll("[data-theme-toggle]")) {

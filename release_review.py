@@ -7,6 +7,7 @@ import json
 
 from analyzers import ENGINES, REPOSITORY_RULE_ID, REPORT_RULES as RULES, repository_paths_checked
 from workspace import WorkspaceError
+from case_severity import LABELS as SEVERITY_LABELS, reaches
 
 
 COMPLETE = ("passed", "review", "partial", "skipped")
@@ -93,7 +94,7 @@ def partition(base, head):
 
 
 def applies(finding, minimum):
-    return minimum == "medium" or finding["level"] == "high"
+    return reaches(finding.get("level"), minimum)
 
 
 def exempt(finding):
@@ -241,6 +242,8 @@ def export_release(comparison, format="html"):
         pieces.append(f"<h2>{label} · {len(items)}</h2><ul>")
         for item in items:
             text = f'{item["ruleId"]} · {item["title"]} · {item["file"]}'
+            if item.get("level") in SEVERITY_LABELS:
+                text += f' · важность: {SEVERITY_LABELS[item["level"]]}'
             if item.get("line"):
                 text += f', строка {item["line"]}'
             if key == "exceptions":

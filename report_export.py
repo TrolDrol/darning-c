@@ -6,6 +6,7 @@ import json
 import re
 from unicodedata import category
 from run_diagnostics import analysis_diagnostics
+from case_severity import LABELS as SEVERITY_LABELS
 from spreadsheet import workbook, XLSX_TYPE
 
 
@@ -33,13 +34,13 @@ LOCAL_REPORT_COLUMNS = {
 }
 EXCEL_HISTORY_HEADERS = (
     "Запуск", "Проект", "Начало", "Завершение", "Автор", "Результат", "Способ запуска", "Источник",
-    "Ревизия", "Сценарий", "Версия сценария", "Предпросмотр", "Всего замечаний", "Высокой важности",
+    "Ревизия", "Сценарий", "Версия сценария", "Предпросмотр", "Всего замечаний", "Высокой и критической важности",
     "Доставка", "GitHub Check", "Ошибки проверки",
 )
 LABELS = {
     "passed": "Пройдена", "review": "Есть замечания", "partial": "Проверено частично", "failed": "Ошибка",
     "queued": "В очереди", "running": "Выполняется", "current": "Обнаружено", "fixed": "Исправлено",
-    "medium": "Средняя", "high": "Высокая", "open": "Открыто", "false_positive": "Ложное срабатывание",
+    **SEVERITY_LABELS, "open": "Открыто", "false_positive": "Ложное срабатывание",
     "accepted": "Риск принят", "new": "Новое", "known": "Известное", "unknown": "Не определено",
     "catalog": "Справочник правил", "llm": "Модель", "manual": "Вручную", "pull_request": "Запрос изменений",
     "github_trial": "Пробная проверка", "sent": "Доставлено", "skipped": "Пропущено",
@@ -122,6 +123,11 @@ def _report_rows(run, diagnostics):
 
 
 def export_report(run, format):
+    if format == "sarif":
+        from case_sarif import report_document
+        return _filename("report", run.get("id"), "sarif"), "application/sarif+json", json.dumps(
+            report_document(run), ensure_ascii=False, indent=2,
+        ).encode("utf-8")
     diagnostics = analysis_diagnostics(run)
     if format == "json":
         return _filename("report", run.get("id"), "json"), JSON_TYPE, json.dumps(

@@ -1,0 +1,153 @@
+.studio-repair {
+  min-width: 0;
+  display: grid;
+  gap: .8rem;
+  margin-block: 1rem;
+  padding: 1rem;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+}
+
+.studio-repair[hidden],
+.studio-repair [hidden],
+.repair-finding-actions[hidden],
+.repair-status:empty,
+.repair-error:empty {
+  display: none;
+}
+
+.repair-heading,
+.repair-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .55rem .8rem;
+}
+
+.repair-heading h3,
+.repair-session p,
+.repair-status,
+.repair-error,
+.repair-dialog p {
+  margin: 0;
+}
+
+.repair-heading h3 {
+  margin-inline-end: auto;
+}
+
+.repair-session,
+.repair-rounds,
+.repair-round {
+  display: grid;
+  gap: .55rem;
+  min-width: 0;
+}
+
+.repair-session + .repair-session {
+  margin-block-start: 1rem;
+  padding-block-start: 1rem;
+  border-block-start: 1px solid var(--line);
+}
+
+.repair-session small,
+.repair-status {
+  color: var(--muted);
+}
+
+.repair-session code,
+.repair-choice code {
+  overflow-wrap: anywhere;
+}
+
+.repair-rounds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.repair-round {
+  padding: .65rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.repair-rounds + details .repair-rounds {
+  margin-block-start: .55rem;
+}
+
+.repair-finding-actions {
+  margin-block-start: .35rem;
+}
+
+.repair-choice {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  cursor: pointer;
+}
+
+.repair-choice input {
+  flex: none;
+  accent-color: var(--link);
+}
+
+.repair-dialog {
+  width: min(560px, calc(100vw - 2rem));
+}
+
+.repair-dialog[open] {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: min(88dvh, 46rem);
+  overflow: hidden;
+  padding: 0;
+}
+
+.repair-dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .85rem 1.2rem;
+  border-block-end: 1px solid var(--line);
+}
+
+.repair-dialog-heading h2 {
+  margin: 0;
+}
+
+.repair-dialog-heading .studio-close {
+  position: static;
+  flex: none;
+}
+
+.repair-dialog form {
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 1rem 1.2rem;
+}
+
+.repair-dialog fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: .65rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.repair-checklist {
+  display: grid;
+  gap: .55rem;
+  max-height: 15rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.repair-error {
+  color: var(--high);
+  border-inline-start: 3px solid currentColor;
+  padding-inline-start: .65rem;
+}

@@ -15,6 +15,7 @@ from analyzers import REPOSITORY_RULE_ID, RULES, repository_paths_checked, run_a
 from delivery import send_summary, smtp_config
 from settings import secret
 from run_diagnostics import analysis_diagnostics
+from case_severity import reaches
 
 
 DATA = Path(os.getenv("BANK_DATA_DIR", Path(__file__).parent / ".data"))
@@ -136,7 +137,7 @@ def make_run(workflow, sources, source_label, previous=None, origin="manual", us
         "message": f"Карточек: {len(findings)}" if with_explanation else "Шаг отключён"
     })
 
-    qualifying = [finding for finding in findings if spec["minimum"] == "medium" or finding["level"] == "high"]
+    qualifying = [finding for finding in findings if reaches(finding.get("level"), spec["minimum"])]
     delivery = None
     stage = {"id": "deliver", "status": "skipped", "message": "Шаг отключён"}
     if spec["delivery"] and qualifying:

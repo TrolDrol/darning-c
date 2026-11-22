@@ -19,6 +19,7 @@ ASSETS = {
     "/vi-coast.webp": ("vi-coast.webp", "image/webp"),
     "/darning-logo.png": ("darning-logo.png", "image/png"),
     "/darning-logo-2.png": ("darning-logo-2.png", "image/png"),
+    "/darning-logo-3.png": ("darning-logo-3.png", "image/png"),
     "/darning-swap-theme.png": ("darning-swap-theme.png", "image/png"),
     "/darning-icon.png": ("darning-icon.png", "image/png"),
     "/model-setup.py": ("model-setup.py", "application/octet-stream"),
@@ -225,33 +226,59 @@ class Handler(BaseHTTPRequestHandler):
                 result = journal(project, query, studio=get_studio(None).store, runs=state["runs"], audit=state.get("audit", ()))
             self.send_json(result)
             return
-        if path in ("/api/studio", "/api/studio/run", "/api/studio/library", "/api/telegram"):
+        if path in ("/api/studio", "/api/studio/run", "/api/studio/library", "/api/studio/activity", "/api/studio/repair", "/api/telegram"):
             import case_model
             from case_repository import marker, markers
             query = self.query(raw_query)
             actor = self.authorize()
             project, org = self.studio_scope(query, actor)
             service = get_studio(self.app)
-            if path == "/api/studio/library":
+            if path == "/api/studio/activity":
+                from case_activity import activity
+                data = activity(service.store, project, query.get("offset", "0"))
+            elif path == "/api/studio/repair":
+                writable = (actor and actor.role != "reader" and
+                            self.app.require_project(actor, project)["role"] in ("editor", "manager"))
+                owner = actor.username if writable else None
+                data = service.repair.overview(project, query.get("runId"), owner, self.studio_manager(actor, project))
+            elif path == "/api/studio/library":
                 from case_library import browse, get_document
                 scope = query.get("scope", "community")
                 data = (get_document(service.store, org, scope, query["id"]) if "id" in query else
                         browse(service.store, org, scope, query.get("offset", "0")))
             elif path == "/api/studio":
+                manager = self.studio_manager(actor, project)
+                if "modelConnection" in query:
+                    if not manager:
+                        raise WorkspaceError("Требуются права руководителя проекта.", 403)
+                    self.send_json(case_model.view(service.store, project, query["modelConnection"] or None))
+                    return
                 bound = marker(service.store, project)
                 repositories = [{"bindingId": item["bindingId"], "repository": item["repository"]}
                                 for item in markers(service.store, project)]
                 data = service.store.overview(project,org,query.get("automationId", "default"),
                                               include_templates=query.get("templates") != "0") | {"boundRepository":bound["repository"] if bound else None,
                         "legacyBoundId":bound["bindingId"] if bound else None, "boundRepositories":repositories,
-                        "inference":case_model.view(service.store,project),"canManageIntegrations":self.studio_manager(actor,project),
+                        "canManageIntegrations":manager,
                         "modelConnections":case_model.connections(service.store,project),"telegramAvailable":bool(self.app)}
             elif path == "/api/telegram":
                 if not self.app or not self.studio_manager(actor,project):
                     raise WorkspaceError("Требуются права руководителя проекта.",403)
                 data = service.telegram.status(project,actor.username)
             else:
-                data = service.telegram.annotate(project,service.store.report(project,query.get("id","")))
+                data = service.store.report(project, query.get("id", ""))
+                if query.get("format") == "sarif":
+                    from report_export import export_report
+                    if data["status"] in ("queued", "running", "pending"):
+                        raise WorkspaceError("Дождитесь завершения проверки.", 409)
+                    filename, mime, body = export_report(data, "sarif")
+                    self.send_content(200, body, mime, (("Content-Disposition", f'attachment; filename="{filename}"'),))
+                    return
+                data = service.telegram.annotate(project, data)
+                from case_repair import repair_key
+                from case_repair_syntax import repairable_syntax_findings
+                data["findings"] = [finding | {"repairId": repair_key(finding)} for finding in data.get("findings", [])]
+                data["repairDiagnostics"] = [finding | {"repairId": repair_key(finding)} for finding in repairable_syntax_findings(data)]
             self.send_json(data)
             return
         if path in ASSETS:
@@ -343,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
             name = path.removeprefix("/api/")
             portal_name = name if name in PORTAL_WRITES else ""
         auth_route = self.app and path in AUTH_WRITES
-        studio = path in ("/api/studio", "/api/studio/discuss", "/api/telegram", "/api/source")
+        studio = path in ("/api/studio", "/api/studio/discuss", "/api/studio/repair", "/api/telegram", "/api/source")
         if path not in WRITES and not portal_name and not auth_route and not studio:
             raise WorkspaceError("Маршрут не найден.", 404)
         actor = self.authorize() if self.app and not auth_route else None
@@ -357,13 +384,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.app.signals.limit(actor.username, "studio", 35, required=True)
         if self.app and path=="/api/runs":
             self.app.require_project(actor,project_id(self.query(raw_query)),write=True)
-        limit = 12_000_000 if path in ("/api/studio","/api/runs") else (420_000 if path in WRITES else 64_000)
+        limit = 12_000_000 if path in ("/api/studio","/api/runs") else (420_000 if path in WRITES else
+                                                                       80_000 if path == "/api/studio/repair" else 64_000)
         payload = json.loads(self.read_body(limit))
         if not isinstance(payload, dict):
             raise WorkspaceError("Ожидается объект JSON.")
         self.validate_strings(payload)
         if studio:
             service = get_studio(self.app)
+            if path == "/api/studio/repair":
+                if not self.app:
+                    raise WorkspaceError("Сеансы GitHub доступны в серверном режиме.", 409)
+                self.send_json(service.repair.action(project, actor.username, self.studio_manager(actor, project), payload), 202)
+                return
             if path == "/api/studio/discuss":
                 from case_ai_review import discuss
                 if self.app:

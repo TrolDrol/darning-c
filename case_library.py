@@ -11,9 +11,11 @@ from workspace import WorkspaceError
 FORMAT = "darning.workflow"
 PAGE = 20
 _EXTENSION = re.compile(r"\\\.[a-z0-9]{1,12}\$")
-_PARAMETERS = {"schedule": ("time", "timezone", "weekdays", "monthDay"), "condition": ("field", "op", "value"), "regex": ("pattern",),
+_PARAMETERS = {"schedule": ("time", "timezone", "weekdays", "monthDay", "cron"), "condition": ("field", "op", "value"), "regex": ("pattern",),
                "custom": ("name", "steps"),
-               "sast": ("language",), "sca": ("manifest",), "explain": ("mode",), "notify": ("channel",)}
+               "literal_review": ("name", "literal", "caseSensitive", "severity", "suffix"),
+               "sast": ("language",), "sca": ("manifest",), "dependency_review": ("manifest",),
+               "explain": ("mode",), "notify": ("channel",)}
 
 
 def metadata(name, description):
@@ -60,6 +62,18 @@ def builtin(name, description, types):
 
 
 BUILTINS = {
+    "builtin-spring-review": builtin("Безопасность Spring и JVM", "Настройки ошибок, защита Spring Security и слабые хеши.",
+                                     ("manual", "source", "spring_review")),
+    "builtin-spring-routes": builtin("Карта маршрутов Spring", "Пути, обработчики и явные аннотации доступа.",
+                                     ("manual", "source", "spring_routes")),
+    "builtin-package-review": builtin("Ревью npm и PyPI", "Сопоставляет зафиксированные версии пакетов с локальным справочником.",
+                                      ("manual", "source", "package_review")),
+    "builtin-ci-review": builtin("GitHub Actions и Dockerfile", "Права заданий, версии внешних действий и пользователь итогового контейнера.",
+                                 ("manual", "source", "github_actions", "dockerfile")),
+    "builtin-pr-dependencies": builtin("Новые уязвимые зависимости в PR", "После копирования выберите подключённый репозиторий и сохраните сценарий.",
+                                       ("github_pr", "source", "dependency_review")),
+    "builtin-java-review": builtin("Ревью Java", "Статические проверки качества и возможностей оптимизации в исходниках Java.",
+                                   ("manual", "source", "java_review")),
     "builtin-secrets": builtin("Секреты в коде", "Поиск встроенных секретов, объяснение риска и проверка фактов.",
                                ("manual", "source", "secrets", "explain", "verify")),
     "builtin-dependencies": builtin("Проверка зависимостей", "Сверка версий прямых зависимостей Gradle и Maven со справочником.",

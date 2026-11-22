@@ -1,6 +1,6 @@
 export async function emailSettings(request) {
   const dialog = document.createElement("dialog");
-  dialog.className = "studio-dialog";
+  dialog.className = "studio-dialog account-email-dialog";
   dialog.setAttribute("aria-labelledby","email-heading");
   dialog.innerHTML = `<div class="studio-dialog-form"><h2 id="email-heading">Почта профиля</h2>
     <p data-status role="status">Загрузка…</p>

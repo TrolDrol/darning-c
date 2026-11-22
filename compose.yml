@@ -152,6 +152,7 @@ services:
     command: ["python", "-B", "server.py"]
     environment:
       <<: [*runtime-env, *smtp, *account-mail, *github, *ai]
+      BANK_STUDIO_SMTP_PROJECTS: ${BANK_STUDIO_SMTP_PROJECTS:-default}
       BANK_AI_KEY_FILE: /run/bank-integrations/ai_key
       BANK_ADMIN_USER: ${BANK_ADMIN_USER:-admin}
       BANK_ADMIN_PASSWORD_FILE: /run/darning/admin/password
@@ -218,7 +219,7 @@ services:
     <<: *runtime
     command: ["python", "-B", "case_runtime.py"]
     environment:
-      <<: [*runtime-env, *smtp, *ai, *github]
+      <<: [*runtime-env, *smtp, *account-mail, *ai, *github]
       BANK_ADMIN_USER: ${BANK_ADMIN_USER:-admin}
       BANK_READER_USER: ${BANK_READER_USER:-}
       BANK_STUDIO_KEY_FILE: /run/darning/key/master
@@ -232,8 +233,13 @@ services:
       BANK_METRICS_TRAFFIC_PROJECTS: ${BANK_METRICS_TRAFFIC_PROJECTS:-}
       BANK_SMTP_USER: ${BANK_SMTP_USER:-}
       BANK_SMTP_PASSWORD_FILE: /run/studio-delivery/smtp_password
+      BANK_ACCOUNT_SMTP_USER: ${BANK_ACCOUNT_SMTP_USER:-}
+      BANK_ACCOUNT_SMTP_PASSWORD_FILE: /run/studio-delivery/account_smtp_password
       BANK_AI_KEY_FILE: /run/studio-ai/ai_key
       BANK_STUDIO_SMTP_PROJECTS: ${BANK_STUDIO_SMTP_PROJECTS:-default}
+      BANK_STUDIO_WEBHOOK_URL: ${BANK_STUDIO_WEBHOOK_URL:-}
+      BANK_STUDIO_WEBHOOK_PROJECTS: ${BANK_STUDIO_WEBHOOK_PROJECTS:-}
+      BANK_STUDIO_WEBHOOK_SECRET_FILE: /run/studio-delivery/webhook_secret
       BANK_REPORT_RETENTION_DAYS: ${BANK_REPORT_RETENTION_DAYS:-30}
     volumes:
       - db_auth:/run/darning/db:ro

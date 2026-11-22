@@ -11,7 +11,7 @@ from case_archive import MAX_ARCHIVE, accepts, archive_snapshot, matches_filter,
 from case_graph import is_bound_source
 from case_source import MAX_BYTES, MAX_FILE
 from github_integration import (GitHubError, OPENER, VALID_REPO, api_request, installation_token,
-                                matches_repository, read_snapshot, sha_value, snapshot_tree, tree_entries)
+                                matches_repository, pull_request_merge_base, read_snapshot, sha_value, snapshot_tree, tree_entries)
 from workspace import WorkspaceError
 
 def bound_config(store, project, signing=False, *, binding_id=None, repository=None):
@@ -91,6 +91,9 @@ def github_error(exc):
         return WorkspaceError("GitHub не подтвердил состояние репозитория. Обновите список коммитов.",409)
     if exc.status == 413:
         return WorkspaceError(str(exc), 413)
+    if exc.retryable and (exc.status == 408 or 500 <= exc.status < 600):
+        return WorkspaceError(f"Временный сбой чтения GitHub (код {exc.status}). Повторите проверку позже.",
+                              502, code="github_read_temporary")
     return WorkspaceError("Не удалось прочитать репозиторий на GitHub. Повторите запрос или выберите ZIP или папку.",502)
 
 
@@ -180,6 +183,16 @@ def public_snapshot(name, revision, mode):
 
 def public_files(name, revision, mode):
     return public_snapshot(name, revision, mode)["files"]
+
+
+def dependency_baseline(store, project, binding, base_sha, head_sha):
+    config, token = read_access(store, project, binding)
+    prefix = "/repos/" + config.repository
+    if not matches_repository(config, api_request(prefix, token)):
+        raise WorkspaceError("GitHub вернул другой репозиторий.")
+    merge_base = pull_request_merge_base(prefix, token, base_sha, head_sha)
+    data = read_snapshot(config, prefix, token, merge_base, ("sca",), base=True)
+    return merge_base, data["files"]
 
 
 def snapshot(store,project,expected,revision=None,mode="kotlin",*,include_branch=False):

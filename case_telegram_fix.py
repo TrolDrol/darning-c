@@ -18,7 +18,8 @@ class FixError(ValueError):
 
 def eligible(source, finding):
     supported_fix = ((finding.get("category") == "SCA" and
-                      PurePosixPath(finding.get("path","")).name == "build.gradle.kts") or
+                      PurePosixPath(finding.get("path","")).name == "build.gradle.kts" and
+                      finding.get("dependencySource") is None) or
                      (finding.get("category") == "SAST" and finding.get("class") == "tls-verification"))
     return (supported_fix and not source.get("historical") and bool(sha_value(source.get("revision")))
             and bool(source.get("bindingId")) and source.get("bindingId") != "legacy"
@@ -80,6 +81,8 @@ def prepare_patch(files, finding, catalog):
     if len(exact) != 1:
         raise FixError("Повторная проверка исходного SHA не подтвердила замечание.")
     row = exact[0]
+    if row.get("dependencySource"):
+        raise FixError("Зависимость из каталога версий или отдельной записи lock-файла требует ручной правки.")
     group, artifact, old = (row[key] for key in ("group","artifact","version"))
     advisories = [a for a in catalog["vulnerabilities"] if (a["group"],a["artifact"]) == (group,artifact)]
     affected = [a for a in advisories if a["id"] == row["advisoryId"]]

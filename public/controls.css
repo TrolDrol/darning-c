@@ -71,6 +71,14 @@ select option:disabled { color: var(--muted); }
       scrollbar-width: thin;
       scrollbar-color: var(--select-edge) var(--surface);
     }
+    :root #project-switcher::picker(select) {
+      inset: auto;
+      position-area: block-end span-inline-start;
+      justify-self: end;
+      inline-size: min(28rem, calc(100vw - 2 * var(--gutter) - 1rem));
+      margin-block: 5px;
+      position-try-fallbacks: flip-block;
+    }
     :root select::picker-icon { color: var(--link); margin-inline-start: auto; transition: rotate .18s ease; }
     :root select:open::picker-icon { rotate: 180deg; }
     :root select option { gap: 12px; min-height: 38px; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
