@@ -24,7 +24,7 @@ docker compose up -d --build --wait
 
 Для остановки выполните `docker compose down`. Данные и ключи хранятся в именованных томах Docker и сохраняются при обычном перезапуске. Для другого локального порта задайте `DARNING_PORT` в файле `.env`. При размещении за HTTPS-прокси укажите в нём также `BANK_PUBLIC_URL` с внешним адресом.
 
-Каталог проверки Maven и Gradle содержит ограниченный офлайн-снимок GitHub Advisory Database. Источники записей и условия CC BY 4.0 указаны в [каталоге зависимостей](case_data/vulnerabilities.json).
+Проверка Maven и Gradle использует ограниченный офлайн-каталог GitHub Advisory Database. Источники записей приведены в [основном каталоге](case_data/vulnerabilities.json) и [дополнении](case_data/maven-supplement.json). Данные GitHub Advisory Database доступны по лицензии [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 В **Сценарии → Библиотека** выберите «Ревью Java», «GitHub Actions и Dockerfile» или «Новые уязвимые зависимости в PR». Скопируйте процесс, укажите источник и сохраните его. Для проверки изменений зависимостей выберите привязанный репозиторий в графе с триггером PR. При запуске через HTTP-вебхук передайте также `baseRevision` с полным SHA базового коммита.
 

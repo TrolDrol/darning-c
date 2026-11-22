@@ -1,0 +1,35 @@
+{
+  "ecosystem": "Maven",
+  "vulnerabilities": [
+    {
+      "id": "GHSA-xjp4-hw94-mvp5",
+      "aliases": ["CVE-2024-29131"],
+      "group": "org.apache.commons",
+      "artifact": "commons-configuration2",
+      "ranges": [{"lower": "2.0", "lowerInclusive": true, "upper": "2.10.1", "upperInclusive": false}],
+      "fixedVersions": ["2.10.1"],
+      "severity": "MEDIUM",
+      "sources": ["https://github.com/advisories/GHSA-xjp4-hw94-mvp5"]
+    },
+    {
+      "id": "GHSA-9w38-p64v-xpmv",
+      "aliases": ["CVE-2024-29133"],
+      "group": "org.apache.commons",
+      "artifact": "commons-configuration2",
+      "ranges": [{"lower": "2.0", "lowerInclusive": true, "upper": "2.10.1", "upperInclusive": false}],
+      "fixedVersions": ["2.10.1"],
+      "severity": "MEDIUM",
+      "sources": ["https://github.com/advisories/GHSA-9w38-p64v-xpmv"]
+    },
+    {
+      "id": "GHSA-337m-mw94-2v6g",
+      "aliases": ["CVE-2026-45205"],
+      "group": "org.apache.commons",
+      "artifact": "commons-configuration2",
+      "ranges": [{"lower": "2.2", "lowerInclusive": true, "upper": "2.15.0", "upperInclusive": false}],
+      "fixedVersions": ["2.15.0"],
+      "severity": "MEDIUM",
+      "sources": ["https://github.com/advisories/GHSA-337m-mw94-2v6g"]
+    }
+  ]
+}

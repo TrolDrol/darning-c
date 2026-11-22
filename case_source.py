@@ -56,5 +56,7 @@ def validate_files(files):
 def advisory_database():
     directory = Path(__file__).parent / "case_data"
     maven = json.loads((directory / "vulnerabilities.json").read_text(encoding="utf-8"))
+    supplement = json.loads((directory / "maven-supplement.json").read_text(encoding="utf-8"))
     packages = json.loads((directory / "package-advisories.json").read_text(encoding="utf-8"))
+    maven["vulnerabilities"].extend(supplement["vulnerabilities"])
     return maven | packages
