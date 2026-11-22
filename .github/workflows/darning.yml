@@ -1,0 +1,55 @@
+name: Проверка коммита в Штопке
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Запустить сценарий и проверить результат
+        shell: bash
+        env:
+          DARNING_URL: ${{ vars.DARNING_URL }}
+          PROJECT: ${{ vars.DARNING_PROJECT }}
+          SCENARIO: ${{ vars.DARNING_SCENARIO }}
+          BINDING: ${{ vars.DARNING_BINDING }}
+          TOKEN: ${{ secrets.DARNING_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          : "${DARNING_URL:?}" "${PROJECT:?}" "${SCENARIO:?}" "${BINDING:?}" "${TOKEN:?}"
+          api="${DARNING_URL%/}/api/ci/projects/$PROJECT"
+          http=(curl --proto '=https' --silent --show-error --fail --max-time 30
+                --header "Authorization: Bearer $TOKEN")
+          if [[ "$BASE_SHA" == 0000000000000000000000000000000000000000 ]]; then BASE_SHA=''; fi
+          body=$(jq -nc --arg repo "@bound:$BINDING" --arg sha "$HEAD_SHA" --arg base "$BASE_SHA" \
+            '{repository:$repo, revision:$sha} + (if $base == "" then {} else {baseRevision:$base} end)')
+          run_id=$("${http[@]}" --header 'Content-Type: application/json' \
+            --header "Idempotency-Key: actions-$GITHUB_REPOSITORY_ID-$GITHUB_RUN_ID" \
+            --data "$body" "$api/scenarios/$SCENARIO/runs" | jq -er '.id')
+          echo "Запуск Штопки: $run_id"
+          for ((i=0; i<120; i++)); do
+            status=$("${http[@]}" "$api/runs/$run_id" | jq -er '.status')
+            case "$status" in
+              queued|running) sleep 5 ;;
+              passed|review)
+                "${http[@]}" "$api/runs/$run_id/result" > "$RUNNER_TEMP/darning-result.json"
+                jq -er '.findings | if type == "array" then length else error("missing findings") end' \
+                  "$RUNNER_TEMP/darning-result.json"
+                jq -e 'all(.findings[]; (.severity != "HIGH" and .severity != "CRITICAL"))' \
+                  "$RUNNER_TEMP/darning-result.json" > /dev/null
+                exit 0 ;;
+              *) echo "::error::Проверка завершилась со статусом $status"; exit 1 ;;
+            esac
+          done
+          echo "::error::За 10 минут результат не получен. ID запуска: $run_id"
+          exit 1
